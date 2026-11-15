@@ -1,7 +1,7 @@
 //! [`FitData`] — the data abstraction every fit consumes — and [`FitExt`], the
 //! blanket trait that gives every dataset the `.fit(...)` methods.
 
-use oxiroot_stat::StatError;
+use oxistats::StatError;
 
 use crate::engine::run_fit;
 use crate::model::Model;
@@ -109,7 +109,7 @@ impl FitData for [Point] {
 
 /// Fit methods for any [`FitData`]. Implemented for all of them by a blanket
 /// impl, so `data.fit(&model)` works for a `Hist1D`, a `Graph`, or [`Points`]
-/// alike. Bring it into scope (`use oxiroot_fit::FitExt;`, or the `oxiroot`
+/// alike. Bring it into scope (`use oxifit::FitExt;`, or the `oxiroot`
 /// prelude) to call these.
 pub trait FitExt: FitData {
     /// Fit `model` by chi-square minimization over the full range (ROOT's

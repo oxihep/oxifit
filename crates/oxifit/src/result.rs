@@ -190,7 +190,7 @@ impl FitResult {
         if !self.valid || self.ndf == 0 {
             f64::NAN
         } else {
-            oxiroot_stat::chi_square_prob(self.chi2, self.ndf)
+            oxistats::chi_square_prob(self.chi2, self.ndf)
         }
     }
 }

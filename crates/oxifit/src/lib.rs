@@ -6,7 +6,7 @@
 //! [`FitData`] trait and gains the [`FitExt`] fit methods:
 //!
 //! ```
-//! use oxiroot_fit::{FitExt, Model, Points};
+//! use oxifit::{FitExt, Model, Points};
 //!
 //! // Raw (x, y, σ) measurements; the same API works for a Hist1D or a Graph.
 //! let data = Points::new(&[0.0, 1.0, 2.0, 3.0], &[1.0, 3.0, 5.0, 7.0], &[0.1; 4])?;
@@ -15,7 +15,7 @@
 //! assert!(fit.valid);
 //! assert!((fit.params[0] - 1.0).abs() < 1e-6); // intercept ≈ 1
 //! assert!((fit.params[1] - 2.0).abs() < 1e-6); // slope ≈ 2
-//! # Ok::<(), oxiroot_fit::StatError>(())
+//! # Ok::<(), oxifit::StatError>(())
 //! ```
 //!
 //! The minimizer is the pure-Rust [Minuit2](https://crates.io/crates/minuit2)
@@ -41,6 +41,6 @@ mod result;
 pub use data::{FitData, FitExt, Point, Points};
 pub use model::Model;
 /// The error [`Points::new`] and [`Points::unweighted`] return for inputs of
-/// different lengths (from `oxiroot-stat`).
-pub use oxiroot_stat::StatError;
+/// different lengths (from `oxistats`).
+pub use oxistats::StatError;
 pub use result::{FitMethod, FitOptions, FitResult, Loss, Minimizer};

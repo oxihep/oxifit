@@ -1,19 +1,20 @@
 [package]
-name = "oxiroot-fit"
+name = "oxifit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
+documentation = "https://docs.rs/oxifit"
+readme = "../../README.md"
 keywords = ["fit", "minuit", "least-squares", "hep", "physics"]
 categories = ["science", "mathematics"]
 description = "Parametric curve fitting (Minuit2) for any 1-D data — histograms, graphs, or custom points"
 
 [dependencies]
 minuit2 = { workspace = true }
-oxiroot-stat = { workspace = true }
-oxiroot-formula = { workspace = true }
+oxistats = { workspace = true }
+oxifit-formula = { workspace = true }
 argmin = { workspace = true, optional = true }
 argmin-math = { workspace = true, optional = true }
 

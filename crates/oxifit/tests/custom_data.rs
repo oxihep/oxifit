@@ -1,6 +1,6 @@
 //! Fitting arbitrary data — no histogram or graph in sight, just `(x, y, σ)`.
 
-use oxiroot_fit::{FitData, FitExt, FitMethod, FitOptions, Model, Point, Points};
+use oxifit::{FitData, FitExt, FitMethod, FitOptions, Model, Point, Points};
 
 fn rel_close(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() <= tol * b.abs().max(1.0)
@@ -182,7 +182,7 @@ fn voigtian_model_is_a_valid_fit() {
 
 #[test]
 fn robust_loss_matches_scipy_least_squares() {
-    use oxiroot_fit::Loss;
+    use oxifit::Loss;
     // A clean line y = 1 + 2x with one big outlier at x = 7.
     let x: Vec<f64> = (0..20).map(|i| i as f64).collect();
     let mut y: Vec<f64> = x.iter().map(|&x| 1.0 + 2.0 * x).collect();
@@ -221,7 +221,7 @@ fn robust_loss_matches_scipy_least_squares() {
 #[cfg(feature = "argmin")]
 #[test]
 fn nelder_mead_recovers_a_line() {
-    use oxiroot_fit::Minimizer;
+    use oxifit::Minimizer;
     let x = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
     let y: Vec<f64> = x.iter().map(|&x| 3.0 + 2.0 * x).collect();
     let data = Points::new(&x, &y, &[0.05; 6]).unwrap();
@@ -247,7 +247,7 @@ fn nelder_mead_recovers_a_line() {
 #[cfg(feature = "argmin")]
 #[test]
 fn nelder_mead_agrees_with_minuit2_on_a_gaussian() {
-    use oxiroot_fit::Minimizer;
+    use oxifit::Minimizer;
     // A clean discretized Gaussian; fit it with both backends and compare.
     let xs: Vec<f64> = (-30..=30).map(|i| i as f64 * 0.1).collect();
     let ys: Vec<f64> = xs
@@ -295,7 +295,7 @@ fn nelder_mead_agrees_with_minuit2_on_a_gaussian() {
 #[cfg(feature = "argmin")]
 #[test]
 fn nelder_mead_respects_fixed_parameters() {
-    use oxiroot_fit::Minimizer;
+    use oxifit::Minimizer;
     let xs: Vec<f64> = (-20..=20).map(|i| i as f64 * 0.1).collect();
     let ys: Vec<f64> = xs
         .iter()
@@ -313,7 +313,7 @@ fn nelder_mead_respects_fixed_parameters() {
 
 #[test]
 fn points_reject_inputs_of_different_lengths() {
-    use oxiroot_fit::StatError;
+    use oxifit::StatError;
     assert_eq!(
         Points::new(&[1.0, 2.0], &[1.0], &[0.1, 0.1]).unwrap_err(),
         StatError::LengthMismatch { left: 2, right: 1 }

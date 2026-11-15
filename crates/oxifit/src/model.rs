@@ -159,7 +159,7 @@ impl Model {
             name,
             &["constant", "mean", "sigma", "alpha", "n"],
             vec![1.0, 0.0, 1.0, 1.5, 2.0],
-            |x, p| p[0] * oxiroot_stat::crystal_ball(x, p[1], p[2], p[3], p[4]),
+            |x, p| p[0] * oxistats::crystal_ball(x, p[1], p[2], p[3], p[4]),
         )
     }
 
@@ -173,7 +173,7 @@ impl Model {
                 "constant", "mean", "sigma", "alpha_lo", "n_lo", "alpha_hi", "n_hi",
             ],
             vec![1.0, 0.0, 1.0, 1.5, 2.0, 1.5, 2.0],
-            |x, p| p[0] * oxiroot_stat::double_crystal_ball(x, p[1], p[2], p[3], p[4], p[5], p[6]),
+            |x, p| p[0] * oxistats::double_crystal_ball(x, p[1], p[2], p[3], p[4], p[5], p[6]),
         )
     }
 
@@ -184,7 +184,7 @@ impl Model {
             name,
             &["constant", "mean", "gamma"],
             vec![1.0, 0.0, 1.0],
-            |x, p| p[0] * oxiroot_stat::breit_wigner(x, p[1], p[2]),
+            |x, p| p[0] * oxistats::breit_wigner(x, p[1], p[2]),
         )
     }
 
@@ -197,7 +197,7 @@ impl Model {
             name,
             &["constant", "mean", "sigma", "gamma"],
             vec![1.0, 0.0, 1.0, 1.0],
-            |x, p| p[0] * oxiroot_stat::voigtian(x, p[1], p[2], p[3]),
+            |x, p| p[0] * oxistats::voigtian(x, p[1], p[2], p[3]),
         )
     }
 
@@ -209,7 +209,7 @@ impl Model {
             name,
             &["constant", "peak", "sigma", "tail"],
             vec![1.0, 0.0, 1.0, 0.1],
-            |x, p| p[0] * oxiroot_stat::novosibirsk(x, p[1], p[2], p[3]),
+            |x, p| p[0] * oxistats::novosibirsk(x, p[1], p[2], p[3]),
         )
     }
 
@@ -221,21 +221,21 @@ impl Model {
             name,
             &["constant", "m0", "c", "power"],
             vec![1.0, 10.0, -1.0, 0.5],
-            |x, p| p[0] * oxiroot_stat::argus(x, p[1], p[2], p[3]),
+            |x, p| p[0] * oxistats::argus(x, p[1], p[2], p[3]),
         )
     }
 
-    /// Build a model from an arbitrary ROOT [`TFormula`](oxiroot_formula) string
+    /// Build a model from an arbitrary ROOT [`TFormula`](oxifit_formula) string
     /// (`"[0]+[1]*x"`, `"gaus"`, `"[0]*exp(-[1]*x)+[2]"`, …). Parameters are
     /// `[0], [1], …` and the variable is `x`; the parameter count is inferred
     /// from the formula. All parameters start at zero — seed them with
     /// [`with_params`](Self::with_params).
     ///
     /// # Errors
-    /// Returns a [`ParseError`](oxiroot_formula::ParseError) if the formula does
+    /// Returns a [`ParseError`](oxifit_formula::ParseError) if the formula does
     /// not parse.
-    pub fn from_formula(name: &str, formula: &str) -> Result<Model, oxiroot_formula::ParseError> {
-        let f = oxiroot_formula::Formula::parse(formula)?;
+    pub fn from_formula(name: &str, formula: &str) -> Result<Model, oxifit_formula::ParseError> {
+        let f = oxifit_formula::Formula::parse(formula)?;
         let npar = f.npar();
         // Own the parameter names so the closure can move `f`.
         let names = f.param_names().to_vec();
@@ -287,12 +287,12 @@ impl Model {
     /// shapes it is a no-op (seed those with [`with_params`](Self::with_params)).
     ///
     /// ```
-    /// # use oxiroot_fit::{FitExt, Model, Points};
+    /// # use oxifit::{FitExt, Model, Points};
     /// let data = Points::new(&[-1.0, 0.0, 1.0], &[1.0, 4.0, 1.0], &[0.2; 3])?;
     /// let model = Model::gaussian("g").estimate_from(&data); // no manual seed
     /// let fit = data.fit(&model);
     /// # assert!(fit.params[2] > 0.0);
-    /// # Ok::<(), oxiroot_fit::StatError>(())
+    /// # Ok::<(), oxifit::StatError>(())
     /// ```
     #[must_use]
     pub fn estimate_from(mut self, data: &impl FitData) -> Model {
