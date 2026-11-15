@@ -6,6 +6,8 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.1.1]
+
 ### Fixed
 
 - **oxifit-formula: formulas from files can no longer crash the process.**
