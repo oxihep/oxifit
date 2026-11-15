@@ -6,6 +6,14 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **oxifit-formula: formulas from files can no longer crash the process.**
+  Parsing is limited to 200 levels of nesting (deep parentheses, unary
+  operators or calls used to overflow the stack), parameter indices to 10 000
+  (`[1e12]` and huge shortcut offsets used to allocate or overflow), and `polN`
+  to degree 100. Each limit is a `ParseError`.
+
 ## [0.1.0]
 
 First release under the oxifit names. The code is `oxiroot-fit` and
