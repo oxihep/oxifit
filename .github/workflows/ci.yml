@@ -4,6 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly: two minutes of fuzzing the formula parser. Never gates a PR.
+  schedule:
+    - cron: "37 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -104,3 +115,36 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories bans sources
+
+  fuzz:
+    name: fuzz target builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Build fuzz targets
+        working-directory: fuzz
+        run: cargo +nightly fuzz build
+
+      - name: Fuzz each target for 2 minutes (weekly)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        working-directory: fuzz
+        run: |
+          set -euo pipefail
+          for target in $(cargo +nightly fuzz list); do
+            cargo +nightly fuzz run "$target" -- -max_total_time=120 -rss_limit_mb=2048
+          done
+
+      - name: Keep any crash input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore

@@ -6,6 +6,12 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Testing
+
+- A cargo-fuzz target for the formula parser (`fuzz/`): whatever parses must
+  evaluate without panicking, and its ROOT spelling must parse again. CI
+  builds it on every PR and runs it for two minutes weekly.
+
 ## [0.1.1]
 
 ### Fixed
