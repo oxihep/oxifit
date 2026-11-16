@@ -18,10 +18,10 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
     let points: Vec<(f64, f64, f64)> = all
         .iter()
         .filter_map(|p| {
-            if let Some((lo, hi)) = opts.range {
-                if p.x < lo || p.x > hi {
-                    return None;
-                }
+            if let Some((lo, hi)) = opts.range
+                && (p.x < lo || p.x > hi)
+            {
+                return None;
             }
             (!drop_empty || p.sigma > 0.0).then_some((p.x, p.y, p.sigma))
         })
@@ -79,11 +79,7 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
                     .iter()
                     .map(|&(x, y, _)| {
                         let f = func(x, p).max(1e-300);
-                        if y > 0.0 {
-                            f - y + y * (y / f).ln()
-                        } else {
-                            f
-                        }
+                        if y > 0.0 { f - y + y * (y / f).ln() } else { f }
                     })
                     .sum::<f64>()
             }
@@ -234,15 +230,15 @@ fn minimize_argmin(model: &Model, cost: &impl Fn(&[f64]) -> f64, ndf: usize) -> 
         let mut pen = 0.0;
         for (k, &i) in free.iter().enumerate() {
             let c = model.constraints.get(i).copied().unwrap_or_default();
-            if let Some(lo) = c.lower {
-                if sub[k] < lo {
-                    pen += (lo - sub[k]) * (lo - sub[k]);
-                }
+            if let Some(lo) = c.lower
+                && sub[k] < lo
+            {
+                pen += (lo - sub[k]) * (lo - sub[k]);
             }
-            if let Some(hi) = c.upper {
-                if sub[k] > hi {
-                    pen += (sub[k] - hi) * (sub[k] - hi);
-                }
+            if let Some(hi) = c.upper
+                && sub[k] > hi
+            {
+                pen += (sub[k] - hi) * (sub[k] - hi);
             }
         }
         cost(&scatter(sub, &free, &init_full)) + 1e30 * pen
