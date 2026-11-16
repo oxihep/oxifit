@@ -15,7 +15,7 @@ or raw `(x, y, σ)` points. The minimizer is the pure-Rust
 
 ```toml
 [dependencies]
-oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.1.0" }
+oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.1.1" }
 ```
 
 ```rust
