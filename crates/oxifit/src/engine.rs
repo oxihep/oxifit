@@ -212,9 +212,27 @@ fn invalid(model: &Model) -> FitResult {
 /// limits are enforced with a soft quadratic penalty. Parameter errors and the
 /// covariance come from a numerical Hessian of the (unpenalized) cost at the
 /// minimum (`cov = 2·H⁻¹`); MINOS is not provided.
+/// The most simplex iterations a Nelder–Mead fit takes before giving up.
+#[cfg(feature = "argmin")]
+const NELDER_MEAD_MAX_ITERS: u64 = 10_000;
+
 #[cfg(feature = "argmin")]
 fn minimize_argmin(model: &Model, cost: &impl Fn(&[f64]) -> f64, ndf: usize) -> FitResult {
-    use argmin::core::{CostFunction, Error, Executor};
+    minimize_argmin_capped(model, cost, ndf, NELDER_MEAD_MAX_ITERS)
+}
+
+/// Nelder–Mead with at most `max_iters` iterations. The result is valid only
+/// when the simplex converged (its spread fell below the tolerance) to a
+/// finite χ²: a run stopped by the cap is reported, but not as valid, as
+/// Minuit's `is_valid()` would not be.
+#[cfg(feature = "argmin")]
+fn minimize_argmin_capped(
+    model: &Model,
+    cost: &impl Fn(&[f64]) -> f64,
+    ndf: usize,
+    max_iters: u64,
+) -> FitResult {
+    use argmin::core::{CostFunction, Error, Executor, State, TerminationReason};
     use argmin::solver::neldermead::NelderMead;
 
     let np = model.params.len();
@@ -270,7 +288,7 @@ fn minimize_argmin(model: &Model, cost: &impl Fn(&[f64]) -> f64, ndf: usize) -> 
         return invalid(model);
     };
     let Ok(res) = Executor::new(Prob(&penalized), solver)
-        .configure(|s| s.max_iters(10_000))
+        .configure(|s| s.max_iters(max_iters))
         .run()
     else {
         return invalid(model);
@@ -278,6 +296,10 @@ fn minimize_argmin(model: &Model, cost: &impl Fn(&[f64]) -> f64, ndf: usize) -> 
     let Some(best) = res.state().best_param.as_ref().cloned() else {
         return invalid(model);
     };
+    let converged = matches!(
+        res.state().get_termination_reason(),
+        Some(TerminationReason::SolverConverged)
+    );
 
     let params = scatter(&best, &free, &init_full);
     let chi2 = cost(&params); // the clean cost (no penalty) at the minimum
@@ -290,7 +312,33 @@ fn minimize_argmin(model: &Model, cost: &impl Fn(&[f64]) -> f64, ndf: usize) -> 
         covariance,
         chi2,
         ndf,
-        valid: chi2.is_finite(),
+        valid: converged && chi2.is_finite(),
+    }
+}
+
+#[cfg(all(test, feature = "argmin"))]
+mod nelder_mead_tests {
+    use super::*;
+
+    /// χ² of a line through (x, 3 + 2x), x = 0..5, unit errors.
+    fn line_chi2(p: &[f64]) -> f64 {
+        (0..6)
+            .map(|i| {
+                let x = f64::from(i);
+                (p[0] + p[1] * x - (3.0 + 2.0 * x)).powi(2)
+            })
+            .sum()
+    }
+
+    #[test]
+    fn valid_only_when_the_simplex_converged() {
+        let model = Model::polynomial("l", 1).with_params(vec![0.0, 0.0]);
+        let done = minimize_argmin_capped(&model, &line_chi2, 4, NELDER_MEAD_MAX_ITERS);
+        assert!(done.valid && done.chi2 < 1e-6, "{done:?}");
+        // Stopped after a few steps: a finite χ², but not a minimum.
+        let cut = minimize_argmin_capped(&model, &line_chi2, 4, 3);
+        assert!(cut.chi2.is_finite());
+        assert!(!cut.valid, "a capped run must not be valid: {cut:?}");
     }
 }
 

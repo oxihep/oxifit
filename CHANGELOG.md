@@ -6,6 +6,14 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Nelder–Mead fit stopped by its iteration cap reported `valid`.** With
+  the `argmin` feature, `Minimizer::NelderMead` set `valid` from a finite χ²
+  alone, so a run that hit the 10 000-iteration limit before the simplex
+  converged still looked like a good fit. `valid` now also requires
+  convergence, as Minuit2's `is_valid()` does.
+
 ### Changed
 
 - **Rust 1.100 and edition 2024.** The minimum supported Rust version
