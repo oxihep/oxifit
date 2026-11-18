@@ -43,6 +43,17 @@ costs, limits, robust losses and fitting ROOT histograms (it uses the
 | --- | --- | --- |
 | `argmin` | no | A gradient-free Nelder–Mead backend via the `argmin` crate, chosen with `FitOptions::minimizer(Minimizer::NelderMead)` |
 
+## Examples
+
+Physics fits on toy data with known truth, each printing the fitted values
+next to it (`cargo run -p oxifit --example <name>`):
+
+| Example | Shows |
+| --- | --- |
+| [`resonance_fit`](crates/oxifit/examples/resonance_fit.rs) | A Z → μμ peak on a falling background: a sideband fit seeds ROOT's `gaus(0)+expo(3)`, fitted with χ² and with a Poisson likelihood, with MINOS errors |
+| [`trigger_turn_on`](crates/oxifit/examples/trigger_turn_on.rs) | A trigger efficiency turn-on fitted with an error-function model (a custom `Model` closure), and the pT where it is fully efficient |
+| [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay-time distribution, and why a likelihood beats a χ² on sparse tails |
+
 ## The oxihep family
 
 Rust crates for high-energy physics, split the way Python's
