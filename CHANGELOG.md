@@ -6,6 +6,8 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.1.2]
+
 ### Fixed
 
 - **A Nelder–Mead fit stopped by its iteration cap reported `valid`.** With
