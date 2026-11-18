@@ -67,6 +67,15 @@ These crates were `oxiroot-fit` and `oxiroot-formula` inside the
 [oxiroot](https://github.com/oxihep/oxiroot) workspace; their history was
 carried over when they moved here.
 
+## AI assistance
+
+This project is developed with the help of AI coding assistants. Under the
+author's direction they wrote and reviewed much of the code, the tests and
+the documentation. Every change goes through the same checks either way: the
+test suite and CI (including cross-checks between its two minimizers, and
+fuzzing of the formula parser) and review before it is merged. If something
+looks wrong, please open an issue.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
