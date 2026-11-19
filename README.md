@@ -59,6 +59,15 @@ The global searches look inside each free parameter's limits, so set a
 `FitOptions::strategy`, `tolerance` and `max_fcn` tune Minuit2, and
 `with_hesse(false)` skips HESSE when only the values matter.
 
+## Profiles and contours
+
+Beyond the parabolic errors (and MINOS), `data.profile(&model, &opts, "mean",
+(lo, hi), n)` scans the cost in one parameter, refitting the others at each
+value; `Profile::interval(1.0)` reads off the 1σ interval. `data.contour(&model,
+&opts, "mean", "sigma", 2.30, 40)` traces the 68 % joint region of two
+parameters (`Δ = 5.99` for 95 %), again refitting the rest. Both return a
+`FitError` for an unknown or fixed parameter or a failed fit.
+
 The [fitting guide](https://oxihep.github.io/oxiroot/guide/fitting/) covers
 costs, limits, robust losses and fitting ROOT histograms (it uses the
 `oxiroot::fit` re-export, which is this crate).

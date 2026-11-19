@@ -37,6 +37,7 @@ mod data;
 mod engine;
 mod model;
 mod result;
+mod scan;
 
 pub use data::{FitData, FitExt, Point, Points};
 pub use model::Model;
@@ -46,3 +47,4 @@ pub use oxistats::StatError;
 pub use result::{
     CmaEs, DifferentialEvolution, FitMethod, FitOptions, FitResult, Loss, Minimizer, MultiStart,
 };
+pub use scan::{Contour, FitError, Profile};

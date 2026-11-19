@@ -6,6 +6,7 @@ use oxistats::StatError;
 use crate::engine::run_fit;
 use crate::model::Model;
 use crate::result::{FitOptions, FitResult};
+use crate::scan::{self, Contour, FitError, Profile};
 
 /// One data point a model is fit against: an independent value `x`, a measured
 /// value `y`, and a Gaussian uncertainty `sigma` on `y`.
@@ -138,6 +139,64 @@ pub trait FitExt: FitData {
         let result = self.fit_opts(model, opts);
         model.params.clone_from(&result.params);
         result
+    }
+
+    /// The profile of the cost in parameter `param`: fit once (per `opts`),
+    /// then step `param` over `n` values evenly spaced across `range`, refitting
+    /// the other parameters (MIGRAD from the best fit) at each, and report
+    /// `Δcost` against the minimum. [`Profile::interval`] reads off the 1σ
+    /// (`Δ = 1`) or 2σ (`Δ = 4`) interval, valid where the cost is not
+    /// parabolic. Costs `n` fits.
+    ///
+    /// ```
+    /// # use oxifit::{FitExt, Model, Points};
+    /// let data = Points::new(&[0.0, 1.0, 2.0, 3.0], &[1.0, 3.1, 4.9, 7.0], &[0.2; 4])?;
+    /// let line = Model::polynomial("line", 1).with_params(vec![0.0, 1.0]);
+    /// let fit = data.fit(&line);
+    /// let profile = data
+    ///     .profile(&line, &Default::default(), "p1", (fit.params[1] - 0.3, fit.params[1] + 0.3), 31)
+    ///     .unwrap();
+    /// let (lo, hi) = profile.interval(1.0).unwrap();
+    /// // A linear fit's χ² is parabolic: the interval is the parabolic error.
+    /// assert!(((hi - lo) / 2.0 / fit.errors[1] - 1.0).abs() < 0.01);
+    /// # Ok::<(), oxifit::StatError>(())
+    /// ```
+    ///
+    /// # Errors
+    /// [`FitError::UnknownParameter`] / [`FitError::FixedParameter`] if `param`
+    /// is not a free parameter of `model`; [`FitError::FitFailed`] if the fit
+    /// at the minimum is not valid.
+    fn profile(
+        &self,
+        model: &Model,
+        opts: &FitOptions,
+        param: &str,
+        range: (f64, f64),
+        n: usize,
+    ) -> Result<Profile, FitError> {
+        scan::profile(&self.points(), model, opts, param, range, n)
+    }
+
+    /// The 2-D confidence contour of parameters `x` and `y` at `Δcost = delta`
+    /// (`2.30` for a 68.3 % joint region, `5.99` for 95 %; `1.0` for the
+    /// contour whose projections are the 1σ errors), traced by Minuit2's
+    /// `MnContours` with `npoints` points (at least 4) around the minimum
+    /// found per `opts`.
+    ///
+    /// # Errors
+    /// [`FitError::UnknownParameter`] / [`FitError::FixedParameter`] if `x` or
+    /// `y` is not a free parameter of `model`; [`FitError::FitFailed`] if the
+    /// fit at the minimum is not valid or the contour could not be traced.
+    fn contour(
+        &self,
+        model: &Model,
+        opts: &FitOptions,
+        x: &str,
+        y: &str,
+        delta: f64,
+        npoints: usize,
+    ) -> Result<Contour, FitError> {
+        scan::contour(&self.points(), model, opts, (x, y), delta, npoints)
     }
 }
 
