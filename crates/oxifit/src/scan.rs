@@ -183,10 +183,14 @@ pub(crate) fn profile(
     let values: Vec<f64> = (0..n)
         .map(|k| lo + (hi - lo) * k as f64 / (n - 1) as f64)
         .collect();
-    let delta = values
-        .iter()
-        .map(|&v| delta_at(data, model, &local, &best, &[(i, v)]))
-        .collect();
+    let at = |&v: &f64| delta_at(data, model, &local, &best, &[(i, v)]);
+    #[cfg(feature = "rayon")]
+    let delta = {
+        use rayon::prelude::*;
+        values.par_iter().map(at).collect()
+    };
+    #[cfg(not(feature = "rayon"))]
+    let delta = values.iter().map(at).collect();
     Ok(Profile {
         param: param.to_string(),
         best: best.params[i],
@@ -235,8 +239,8 @@ pub(crate) fn contour(
 
     let local = local_opts(opts);
     let n = npoints.max(4);
-    let mut points = Vec::with_capacity(n);
-    for k in 0..n {
+    // One root-find per ray; the rays are independent.
+    let ray = |k: usize| -> Option<(f64, f64)> {
         let theta = std::f64::consts::TAU * k as f64 / n as f64;
         let (c, s) = (theta.cos(), theta.sin());
         let dir = (l11 * c, l21 * c + l22 * s);
@@ -245,9 +249,16 @@ pub(crate) fn contour(
             let (px, py) = at(r);
             delta_at(data, model, &local, &best, &[(ix, px), (iy, py)]) - delta
         };
-        let r = ray_root(g, delta.sqrt()).ok_or(FitError::FitFailed)?;
-        points.push(at(r));
-    }
+        ray_root(g, delta.sqrt()).map(at)
+    };
+    #[cfg(feature = "rayon")]
+    let points: Option<Vec<(f64, f64)>> = {
+        use rayon::prelude::*;
+        (0..n).into_par_iter().map(ray).collect()
+    };
+    #[cfg(not(feature = "rayon"))]
+    let points: Option<Vec<(f64, f64)>> = (0..n).map(ray).collect();
+    let points = points.ok_or(FitError::FitFailed)?;
     Ok(Contour {
         x_param: x.to_string(),
         y_param: y.to_string(),

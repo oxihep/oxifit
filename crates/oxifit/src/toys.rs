@@ -108,9 +108,12 @@ impl Toys {
     /// same order, for the pulls to compare them.
     #[must_use]
     pub fn run(&self, model: &Model, opts: &FitOptions, ntoys: usize) -> ToyStudy {
+        // Every sample is drawn first, in order, from one generator — so a
+        // study is the same whether its fits then run on one thread or many
+        // (`rayon` feature).
         let mut rng = Rng(self.seed);
         let f = |x: f64| self.truth.eval(x);
-        let fits = match &self.kind {
+        let samples: Vec<Sample> = match &self.kind {
             Kind::Binned(xs) => {
                 let mu: Vec<f64> = xs.iter().map(|&x| f(x).max(0.0)).collect();
                 (0..ntoys)
@@ -123,7 +126,7 @@ impl Toys {
                                 Point::new(x, n, n.sqrt())
                             })
                             .collect();
-                        Points::from_points(pts).fit_opts(model, opts)
+                        Sample::Binned(Points::from_points(pts))
                     })
                     .collect()
             }
@@ -142,17 +145,34 @@ impl Toys {
                             n
                         };
                         let xs: Vec<f64> = (0..count).map(|_| sampler.draw(&mut rng)).collect();
-                        Events::new(&xs).fit_opts(model, opts)
+                        Sample::Unbinned(Events::new(&xs))
                     })
                     .collect()
             }
         };
+        let fit = |s: &Sample| match s {
+            Sample::Binned(p) => p.fit_opts(model, opts),
+            Sample::Unbinned(e) => e.fit_opts(model, opts),
+        };
+        #[cfg(feature = "rayon")]
+        let fits = {
+            use rayon::prelude::*;
+            samples.par_iter().map(fit).collect()
+        };
+        #[cfg(not(feature = "rayon"))]
+        let fits = samples.iter().map(fit).collect();
         ToyStudy {
             param_names: model.param_names.clone(),
             truth: self.truth.params.clone(),
             fits,
         }
     }
+}
+
+/// One generated pseudo-dataset.
+enum Sample {
+    Binned(Points),
+    Unbinned(Events),
 }
 
 /// Draws from a density on `[lo, hi]`: the density tabulated at the edges of

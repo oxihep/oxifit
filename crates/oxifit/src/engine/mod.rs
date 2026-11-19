@@ -31,6 +31,24 @@ use crate::data::Point;
 use crate::model::{Constraint, Model};
 use crate::result::{FitMethod, FitOptions, FitResult, Loss, Minimizer};
 
+/// Points per chunk of a cost sum. The sum is taken chunk by chunk and the
+/// chunk sums are added in order, whether the chunks run on one thread or
+/// many (`rayon` feature), so the result does not depend on the threads.
+const CHUNK: usize = 4096;
+
+/// `Σ term(point)` over `points`, chunked (see [`CHUNK`]); in parallel with the
+/// `rayon` feature once there is more than one chunk.
+fn chunked_sum<T: Sync>(points: &[T], term: impl Fn(&T) -> f64 + Sync) -> f64 {
+    let chunk_sum = |c: &[T]| c.iter().map(&term).sum::<f64>();
+    #[cfg(feature = "rayon")]
+    if points.len() > CHUNK {
+        use rayon::prelude::*;
+        let sums: Vec<f64> = points.par_chunks(CHUNK).map(chunk_sum).collect();
+        return sums.iter().sum();
+    }
+    points.chunks(CHUNK).map(chunk_sum).sum()
+}
+
 /// The most intervals the unbinned normalization integral may use.
 const NORM_INTERVALS: usize = 200;
 
@@ -260,31 +278,19 @@ impl<'m> Prepared<'m> {
         let func = self.func;
         let (loss, fs2) = (self.loss, self.fs2);
         match self.method {
-            FitMethod::Chi2 => self
-                .points
-                .iter()
-                .map(|&(x, y, e)| {
-                    let d = (y - func(x, p)) / e;
-                    robust(d * d, loss, fs2)
-                })
-                .sum(),
-            FitMethod::PearsonChi2 => self
-                .points
-                .iter()
-                .map(|&(x, y, _)| {
-                    let f = func(x, p).max(1e-300); // expected (model) variance
-                    robust((y - f) * (y - f) / f, loss, fs2)
-                })
-                .sum(),
+            FitMethod::Chi2 => chunked_sum(&self.points, |&(x, y, e)| {
+                let d = (y - func(x, p)) / e;
+                robust(d * d, loss, fs2)
+            }),
+            FitMethod::PearsonChi2 => chunked_sum(&self.points, |&(x, y, _)| {
+                let f = func(x, p).max(1e-300); // expected (model) variance
+                robust((y - f) * (y - f) / f, loss, fs2)
+            }),
             FitMethod::Likelihood => {
-                2.0 * self
-                    .points
-                    .iter()
-                    .map(|&(x, y, _)| {
-                        let f = func(x, p).max(1e-300);
-                        if y > 0.0 { f - y + y * (y / f).ln() } else { f }
-                    })
-                    .sum::<f64>()
+                2.0 * chunked_sum(&self.points, |&(x, y, _)| {
+                    let f = func(x, p).max(1e-300);
+                    if y > 0.0 { f - y + y * (y / f).ln() } else { f }
+                })
             }
             FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => {
                 self.unbinned_cost(p, 1)
@@ -311,11 +317,9 @@ impl<'m> Prepared<'m> {
         let norm =
             oxifit_formula::integrate_adaptive(|x| func(x, p), lo, hi, 1e-10, NORM_INTERVALS).0;
         let w = |y: f64| if power == 1 { y } else { y.powi(power) };
-        let logs: f64 = self
-            .points
-            .iter()
-            .map(|&(x, y, _)| w(y) * func(x, p).max(1e-300).ln())
-            .sum();
+        let logs = chunked_sum(&self.points, |&(x, y, _)| {
+            w(y) * func(x, p).max(1e-300).ln()
+        });
         if self.method == FitMethod::ExtendedUnbinnedLikelihood {
             let scale = if power == 1 || self.sum_w == 0.0 {
                 1.0
@@ -335,27 +339,44 @@ impl<'m> Prepared<'m> {
     /// holds [`n_residuals`](Self::n_residuals) values.
     pub(crate) fn residuals(&self, p: &[f64], out: &mut [f64]) {
         let func = self.func;
-        let (loss, fs2) = (self.loss, self.fs2);
-        for (o, &(x, y, e)) in out.iter_mut().zip(&self.points) {
-            *o = match self.method {
-                FitMethod::Chi2 => {
-                    let d = (y - func(x, p)) / e;
-                    robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
-                }
-                FitMethod::PearsonChi2 => {
-                    let f = func(x, p).max(1e-300);
-                    let d = (y - f) / f.sqrt();
-                    robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
-                }
-                FitMethod::Likelihood => {
-                    let f = func(x, p).max(1e-300);
-                    let t = if y > 0.0 { f - y + y * (y / f).ln() } else { f };
-                    (2.0 * t).max(0.0).sqrt().copysign(f - y)
-                }
-                // No residuals: `n_residuals` is 0 for these.
-                FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => 0.0,
-            };
+        let (loss, fs2, method) = (self.loss, self.fs2, self.method);
+        let residual = |&(x, y, e): &(f64, f64, f64)| match method {
+            FitMethod::Chi2 => {
+                let d = (y - func(x, p)) / e;
+                robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
+            }
+            FitMethod::PearsonChi2 => {
+                let f = func(x, p).max(1e-300);
+                let d = (y - f) / f.sqrt();
+                robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
+            }
+            FitMethod::Likelihood => {
+                let f = func(x, p).max(1e-300);
+                let t = if y > 0.0 { f - y + y * (y / f).ln() } else { f };
+                (2.0 * t).max(0.0).sqrt().copysign(f - y)
+            }
+            // No residuals: `n_residuals` is 0 for these.
+            FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => 0.0,
+        };
+        let n = self.points.len().min(out.len());
+        let fill = |(o, pts): (&mut [f64], &[(f64, f64, f64)])| {
+            for (o, pt) in o.iter_mut().zip(pts) {
+                *o = residual(pt);
+            }
+        };
+        #[cfg(feature = "rayon")]
+        if n > CHUNK {
+            use rayon::prelude::*;
+            out[..n]
+                .par_chunks_mut(CHUNK)
+                .zip(self.points[..n].par_chunks(CHUNK))
+                .for_each(fill);
+            return;
         }
+        out[..n]
+            .chunks_mut(CHUNK)
+            .zip(self.points[..n].chunks(CHUNK))
+            .for_each(fill);
     }
 }
 
