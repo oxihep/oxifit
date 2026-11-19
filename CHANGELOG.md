@@ -6,6 +6,11 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.3.0]
+
+CMA-ES and Levenberg–Marquardt, sum models with Gaussian constraints, and
+profile likelihoods and contours.
+
 ### Added
 
 - **Profiles and contours.** `FitExt::profile` scans the cost in one
