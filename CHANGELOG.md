@@ -6,6 +6,10 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.2.0]
+
+Global minimizers, HESSE by default, and a fit that can no longer panic.
+
 ### Breaking
 
 - **`FitResult` is `#[non_exhaustive]`** and gains `fval` (the minimized
