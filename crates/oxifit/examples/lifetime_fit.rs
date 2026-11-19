@@ -4,13 +4,16 @@
 //! the shortest times (a displaced-vertex cut), so the toy keeps only
 //! `t > 0.3 ps`, which an exponential fit is insensitive to: the slope does
 //! not depend on where the distribution starts. The fit uses ROOT's `expo`
-//! (`exp(p0 + p1·t)`) and a binned Poisson likelihood; `τ = −1/p1`. Run with:
+//! (`exp(p0 + p1·t)`); `τ = −1/p1`. It is done three ways: on the binned
+//! times with a Neyman χ² and with a Poisson likelihood, and on the
+//! individual decay times with an unbinned likelihood (normalized over the
+//! accepted window, so the cut needs no correction). Run with:
 //!
 //! ```sh
 //! cargo run -p oxifit --example lifetime_fit
 //! ```
 
-use oxifit::{FitExt, FitMethod, FitOptions, Model, Points};
+use oxifit::{Events, FitExt, FitMethod, FitOptions, Model, Points};
 
 struct Toy(u64);
 
@@ -32,14 +35,15 @@ fn main() {
     // 20 000 decays, with the short-time cut applied.
     let width = (t_max - t_min) / nbins as f64;
     let mut counts = vec![0.0; nbins];
-    let mut kept = 0;
+    let mut times = Vec::new();
     for _ in 0..20_000 {
         let t = -tau_true * toy.uniform().ln();
         if (t_min..t_max).contains(&t) {
             counts[((t - t_min) / width) as usize] += 1.0;
-            kept += 1;
+            times.push(t);
         }
     }
+    let kept = times.len();
     let x: Vec<f64> = (0..nbins)
         .map(|i| t_min + (i as f64 + 0.5) * width)
         .collect();
@@ -60,6 +64,20 @@ fn main() {
             (tau - tau_true) / tau_err
         );
     }
+    // Unbinned: every decay time enters; only the shape matters, so the
+    // normalization `p0` is fixed and the window [t_min, t_max] is the range.
+    let shape = model.clone().fix("constant");
+    let opts = FitOptions::new()
+        .method(FitMethod::UnbinnedLikelihood)
+        .range(t_min, t_max);
+    let r = Events::new(&times).fit_opts(&shape, &opts);
+    let slope = r.params[1];
+    let (tau, tau_err) = (-1.0 / slope, r.errors[1] / (slope * slope));
+    println!(
+        "{:<19} τ = {tau:.3} ± {tau_err:.3} ps   (truth {tau_true}, pull {:+.2})",
+        "Unbinned likelihood",
+        (tau - tau_true) / tau_err
+    );
     println!(
         "\n{kept} decays kept after the t > {t_min} ps cut; the statistical error is about \
          τ/√N = {:.3} ps.",

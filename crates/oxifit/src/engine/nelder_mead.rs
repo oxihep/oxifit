@@ -2,6 +2,7 @@
 //! independent cross-check of Minuit2 (`argmin` feature).
 
 use super::Fit;
+use super::linalg::{hessian, invert};
 use crate::result::FitResult;
 
 /// Scatter a free-parameter sub-vector back into the full parameter vector
@@ -125,32 +126,9 @@ fn hessian_errors(
     cost: &impl Fn(&[f64]) -> f64,
 ) -> (Vec<f64>, Option<Vec<Vec<f64>>>) {
     let np = init_full.len();
-    let nf = sub.len();
     let f = |s: &[f64]| cost(&scatter(s, free, init_full));
     let h: Vec<f64> = sub.iter().map(|&v| (v.abs() * 1e-4).max(1e-6)).collect();
-    let f0 = f(sub);
-
-    let mut hess = vec![vec![0.0; nf]; nf];
-    for i in 0..nf {
-        let mut sp = sub.to_vec();
-        sp[i] += h[i];
-        let mut sm = sub.to_vec();
-        sm[i] -= h[i];
-        hess[i][i] = (f(&sp) - 2.0 * f0 + f(&sm)) / (h[i] * h[i]);
-        for j in (i + 1)..nf {
-            let eval = |di: f64, dj: f64| {
-                let mut s = sub.to_vec();
-                s[i] += di * h[i];
-                s[j] += dj * h[j];
-                f(&s)
-            };
-            let v = (eval(1.0, 1.0) - eval(1.0, -1.0) - eval(-1.0, 1.0) + eval(-1.0, -1.0))
-                / (4.0 * h[i] * h[j]);
-            hess[i][j] = v;
-            hess[j][i] = v;
-        }
-    }
-
+    let hess = hessian(&f, sub, &h);
     let covariance = invert(&hess).map(|inv| {
         inv.iter()
             .map(|row| row.iter().map(|&x| 2.0 * x).collect())
@@ -175,54 +153,6 @@ fn hessian_errors(
         }
     }
     (errors, covariance)
-}
-
-/// Invert a small square matrix by Gauss–Jordan elimination with partial
-/// pivoting; `None` if singular. Used only for the tiny (few-parameter)
-/// covariance, so an O(n³) dense solve is plenty.
-fn invert(m: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
-    let n = m.len();
-    if n == 0 {
-        return Some(Vec::new());
-    }
-    // Augment with the identity: [m | I].
-    let mut a: Vec<Vec<f64>> = m
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let mut r = row.clone();
-            r.extend((0..n).map(|j| if i == j { 1.0 } else { 0.0 }));
-            r
-        })
-        .collect();
-
-    for col in 0..n {
-        let pivot = (col..n)
-            .max_by(|&a_, &b_| a[a_][col].abs().total_cmp(&a[b_][col].abs()))
-            .unwrap();
-        if a[pivot][col].abs() < 1e-300 {
-            return None;
-        }
-        a.swap(col, pivot);
-        let d = a[col][col];
-        for x in a[col].iter_mut() {
-            *x /= d;
-        }
-        // The pivot row is unchanged while we eliminate the others, so clone it
-        // once and subtract by iterator (no double-indexing of `a`).
-        let pivot_row = a[col].clone();
-        for (row, a_row) in a.iter_mut().enumerate() {
-            if row != col {
-                let factor = a_row[col];
-                if factor != 0.0 {
-                    for (dst, &src) in a_row.iter_mut().zip(&pivot_row) {
-                        *dst -= factor * src;
-                    }
-                }
-            }
-        }
-    }
-    Some(a.into_iter().map(|row| row[n..].to_vec()).collect())
 }
 
 #[cfg(test)]
@@ -250,6 +180,7 @@ mod tests {
             cost: &line_chi2,
             residuals: &|_, _| {},
             n_residuals: 0,
+            cost_w2: None,
             ndf: 4,
             opts: &opts,
             gof: true,

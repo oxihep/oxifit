@@ -99,6 +99,90 @@ impl FitData for Points {
     }
 }
 
+/// Unbinned data: individual events (a value `x` each, with an optional
+/// weight) for the unbinned likelihoods
+/// ([`FitMethod::UnbinnedLikelihood`](crate::FitMethod::UnbinnedLikelihood),
+/// [`FitMethod::ExtendedUnbinnedLikelihood`](crate::FitMethod::ExtendedUnbinnedLikelihood)).
+/// As [`FitData`], each event is a point `(x, weight, 0)`.
+///
+/// ```
+/// # use oxifit::{Events, FitExt, FitMethod, FitOptions, Model};
+/// let events = Events::new(&[0.3, 1.1, 0.7, 2.4, 0.9, 1.6]);
+/// let decay = Model::exponential("decay").with_params(vec![0.0, -1.0]).fix("constant");
+/// let opts = FitOptions::new().method(FitMethod::UnbinnedLikelihood).range(0.0, 5.0);
+/// let fit = events.fit_opts(&decay, &opts);
+/// assert!(fit.valid && fit.params[1] < 0.0);
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Events {
+    x: Vec<f64>,
+    w: Option<Vec<f64>>,
+}
+
+impl Events {
+    /// Unweighted events at `x`.
+    #[must_use]
+    pub fn new(x: &[f64]) -> Events {
+        Events {
+            x: x.to_vec(),
+            w: None,
+        }
+    }
+
+    /// Weighted events: `w[i]` is event `i`'s weight (e.g. an efficiency
+    /// correction or an sWeight). Fit with
+    /// [`FitOptions::with_sumw2`](crate::FitOptions::with_sumw2) for errors
+    /// that reflect the weights.
+    ///
+    /// # Errors
+    /// [`StatError::LengthMismatch`] if `w` is not as long as `x`.
+    pub fn weighted(x: &[f64], w: &[f64]) -> Result<Events, StatError> {
+        paired(x.len(), w.len())?;
+        Ok(Events {
+            x: x.to_vec(),
+            w: Some(w.to_vec()),
+        })
+    }
+
+    /// The event values.
+    #[must_use]
+    pub fn values(&self) -> &[f64] {
+        &self.x
+    }
+
+    /// The event weights, if the events are weighted.
+    #[must_use]
+    pub fn weights(&self) -> Option<&[f64]> {
+        self.w.as_deref()
+    }
+
+    /// The number of events.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.x.len()
+    }
+
+    /// Whether there are no events.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.x.is_empty()
+    }
+}
+
+impl FitData for Events {
+    fn points(&self) -> Vec<Point> {
+        match &self.w {
+            Some(w) => self
+                .x
+                .iter()
+                .zip(w)
+                .map(|(&x, &w)| Point::new(x, w, 0.0))
+                .collect(),
+            None => self.x.iter().map(|&x| Point::new(x, 1.0, 0.0)).collect(),
+        }
+    }
+}
+
 /// Fit a bare collection of points. Because the [`FitExt`] blanket is `?Sized`,
 /// implementing `FitData` on the unsized `[Point]` also gives `.fit(...)` to
 /// `&[Point]`, `[Point; N]`, and `Vec<Point>` (via deref/unsizing).
