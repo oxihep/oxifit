@@ -35,7 +35,10 @@ formula string (`Model::from_formula("f", "[0]*exp(-0.5*((x-[1])/[2])^2)")`).
 Add models to fit a signal on a background (`sig + bkg`, or `Model::sum`;
 parameters become `sig.mean`, `bkg.slope`, …), and constrain a parameter
 with a Gaussian — an external measurement or a nuisance prior — with
-`.constrain("bkg.slope", -0.02, 0.005)`.
+`.constrain("bkg.slope", -0.02, 0.005)`. `Model::convolve("m", &signal,
+&resolution, window)` smears a model by a resolution function (a unit-area
+`Model::normal`, say): a lifetime by vertex resolution, a resonance by
+detector resolution.
 
 ## Minimizers
 

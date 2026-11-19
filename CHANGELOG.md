@@ -8,6 +8,15 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Convolution** (RooFit's `RooFFTConvPdf`): `Model::convolve(name,
+  &signal, &resolution, window)` is `∫ f(x − t)·g(t) dt` over the window,
+  integrated adaptively (a step such as a decay starting at `t = 0` is
+  handled). Parameters are named after the two parts; with analytic
+  gradients on both it has one too. Checked against the exponentially
+  modified Gaussian to 1e-8.
+- **`Model::normal`**, a unit-area Gaussian density with its gradient — a
+  resolution function, or a shape for the unbinned likelihoods.
+
 - **Analytic gradients.** `Model::with_gradient(|x, p, g| …)` supplies
   `∂f/∂p`; the Gaussian, exponential and polynomial shapes have theirs, a
   sum of models has one when every part does, and `Model::check_gradient`
