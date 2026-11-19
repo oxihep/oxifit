@@ -18,7 +18,7 @@
 mod cmaes;
 mod global;
 mod lbfgsb;
-mod linalg;
+pub(crate) mod linalg;
 mod lm;
 pub(crate) mod minuit;
 #[cfg(feature = "argmin")]

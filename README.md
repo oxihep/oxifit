@@ -155,6 +155,29 @@ let limit = test.upper_limit(0.95, (0.0, 5.0))?;
 println!("μ < {:.2} (expected {:.2})", limit.observed, limit.expected[2]);
 ```
 
+## Template fits with systematics
+
+`TemplateModel` is the HistFactory model of ROOT and pyhf: channels of
+observed counts, each with samples (simulated templates) scaled and deformed by
+modifiers — `norm_factor` (a free normalization), `norm_sys` and `histo_sys`
+(normalization and shape uncertainties, with pyhf's interpolations),
+`stat_error` (the templates' finite statistics, Barlow–Beeston-lite),
+`shape_sys`, `lumi` and `shape_factor`. It is a `Cost`, so `model.fitter()`
+fits it and `HypoTest` sets limits on it; `pulls`, `impacts` (the ranking on
+the parameter of interest) and `yields` (pre- and post-fit, with errors from
+the covariance) summarize the fit. With the `pyhf` feature,
+`Workspace::from_json` reads a pyhf JSON workspace. On two workspaces the
+best fit, CLs and limits match pyhf and the errors match an exact Hessian of
+pyhf's own likelihood (`tests/templates.rs`).
+
+```rust
+let model = TemplateModel::new(vec![Channel::new("SR", &observed)
+    .sample(Sample::new("signal", &sig).norm_factor("mu"))
+    .sample(Sample::new("background", &bkg).norm_sys("xsec", 0.9, 1.1).stat_error("mc", &bkg_err))])?;
+let fit = model.fitter().fit(&FitOptions::new());
+let limit = HypoTest::new(model.fitter(), "mu")?.upper_limit(0.95, (0.0, 10.0))?;
+```
+
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,
@@ -195,6 +218,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`trigger_turn_on`](crates/oxifit/examples/trigger_turn_on.rs) | A trigger efficiency turn-on fitted with an error-function model (a custom `Model` closure), and the pT where it is fully efficient |
 | [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay times — binned χ², binned likelihood and unbinned likelihood — and why a likelihood beats a χ² on sparse tails |
 | [`peak_search`](crates/oxifit/examples/peak_search.rs) | A narrow peak at an unknown mass: MIGRAD from a blind seed misses it, multistart, differential evolution and CMA-ES find it |
+| [`template_fit`](crates/oxifit/examples/template_fit.rs) | A HistFactory-style search: signal, top and W+jets templates in a signal and a control region, with normalization, jet-energy-scale, MC-statistics and luminosity uncertainties — pre/post-fit yields, MINOS, pulls, the impact ranking, significance and the CLs limit with its band, checked with toys |
 | [`resonance_search`](crates/oxifit/examples/resonance_search.rs) | A complete bump hunt: background-function choice (likelihood-ratio test) and its spurious signal, local significance vs mass, the look-elsewhere correction from toy scans, the signal fit, and CLs limits with the expected band, cross-checked with toys (`--release`: a few seconds) |
 
 ## Compared with ROOT, iminuit, scipy and zfit

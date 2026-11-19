@@ -8,6 +8,21 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Template fits with systematic uncertainties** (the HistFactory model of
+  ROOT and pyhf): `TemplateModel` of `Channel`s and `Sample`s with the
+  `norm_factor`, `norm_sys`, `histo_sys`, `stat_error`, `shape_sys`, `lumi`
+  and `shape_factor` modifiers, pyhf's interpolation codes (4 and 4p by
+  default; 1 and 0 available), and auxiliary measurements inside the cost so
+  its Asimov datasets and toys are right for `HypoTest`. `pulls`, `impacts`
+  (ranked) and `yields` (with covariance-propagated errors) summarize a fit.
+  The `pyhf` feature reads pyhf JSON workspaces (`Workspace::from_json`).
+  On two workspaces the best fit, CLs and limits match pyhf 0.8.0, and the
+  errors match an exact Hessian of pyhf's own likelihood, which pyhf's HESSE
+  underestimates by up to 1 % (`tests/templates.rs`).
+- **`template_fit` example**: a two-region search with normalization, shape,
+  MC-statistics and luminosity uncertainties, from pre-fit yields to the
+  impact ranking and the CLs limit.
+
 - **A public cost API.** The `Cost` trait — parameter names, a `−2 ln L` or
   χ² value, optionally a gradient and a measurement count — and `Fitter`,
   which minimizes any cost with every minimizer, HESSE, MINOS, profiles and

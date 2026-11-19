@@ -18,6 +18,7 @@ oxifit-formula = { workspace = true }
 argmin = { workspace = true, optional = true }
 argmin-math = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 rayon = { workspace = true }
@@ -31,6 +32,8 @@ argmin = ["dep:argmin", "dep:argmin-math"]
 # summation order, so results do not depend on the number of threads), and
 # run independent fits — toys, profile points, contour rays — in parallel.
 rayon = ["dep:rayon"]
+# Read pyhf JSON workspaces into a `TemplateModel` (`Workspace::from_json`).
+pyhf = ["dep:serde_json"]
 
 [package.metadata.docs.rs]
 all-features = true
