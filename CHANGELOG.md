@@ -27,6 +27,12 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
   1e-4 on CLs and the limits (`tests/inference.rs`). `upcrossings` and
   `global_significance` give the look-elsewhere correction of a scan
   (Gross–Vitells).
+- **`resonance_search` example**: a complete bump hunt on generated data —
+  the background function chosen by a likelihood-ratio test and checked for
+  spurious signal, the local significance scanned across the mass, the
+  Gross–Vitells look-elsewhere correction from toy scans, the signal fit
+  with MINOS and a profile, and CLs upper limits with the expected band,
+  one cross-checked with toys.
 - **Asimov datasets and toys from a cost**: `Cost::asimov` and `Cost::toy`,
   implemented by `ModelCost` (binned: the expectation, Poisson or Gaussian
   draws; unbinned: weighted events on a fine grid, events drawn from the

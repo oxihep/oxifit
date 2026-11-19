@@ -195,6 +195,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`trigger_turn_on`](crates/oxifit/examples/trigger_turn_on.rs) | A trigger efficiency turn-on fitted with an error-function model (a custom `Model` closure), and the pT where it is fully efficient |
 | [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay times — binned χ², binned likelihood and unbinned likelihood — and why a likelihood beats a χ² on sparse tails |
 | [`peak_search`](crates/oxifit/examples/peak_search.rs) | A narrow peak at an unknown mass: MIGRAD from a blind seed misses it, multistart, differential evolution and CMA-ES find it |
+| [`resonance_search`](crates/oxifit/examples/resonance_search.rs) | A complete bump hunt: background-function choice (likelihood-ratio test) and its spurious signal, local significance vs mass, the look-elsewhere correction from toy scans, the signal fit, and CLs limits with the expected band, cross-checked with toys (`--release`: a few seconds) |
 
 ## Compared with ROOT, iminuit, scipy and zfit
 
