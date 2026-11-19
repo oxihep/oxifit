@@ -12,10 +12,12 @@
 //!   CMA-ES, which search for the right basin and then polish the best point
 //!   with MIGRAD;
 //! - [`lm`] — Levenberg–Marquardt on the residual vector, then MIGRAD;
+//! - [`lbfgsb`] — projected L-BFGS within the limits, then MIGRAD;
 //! - `nelder_mead` — the independent argmin simplex (`argmin` feature).
 
 mod cmaes;
 mod global;
+mod lbfgsb;
 mod linalg;
 mod lm;
 pub(crate) mod minuit;
@@ -49,11 +51,71 @@ fn chunked_sum<T: Sync>(points: &[T], term: impl Fn(&T) -> f64 + Sync) -> f64 {
     points.chunks(CHUNK).map(chunk_sum).sum()
 }
 
+/// `Σ term(point, acc)` into a vector of length `n`, chunked like
+/// [`chunked_sum`]: each chunk accumulates its own vector and the chunk
+/// vectors are added in order.
+fn chunked_vec_sum<T: Sync>(
+    points: &[T],
+    n: usize,
+    term: impl Fn(&T, &mut [f64], &mut [f64]) + Sync,
+    out: &mut [f64],
+) {
+    // Each chunk gets its accumulator and a scratch buffer of length `n`
+    // (allocated once per chunk, not per point).
+    let chunk_vec = |c: &[T]| {
+        let mut acc = vec![0.0; n];
+        let mut scratch = vec![0.0; n];
+        for pt in c {
+            term(pt, &mut acc, &mut scratch);
+        }
+        acc
+    };
+    #[cfg(feature = "rayon")]
+    let parts: Vec<Vec<f64>> = if points.len() > CHUNK {
+        use rayon::prelude::*;
+        points.par_chunks(CHUNK).map(chunk_vec).collect()
+    } else {
+        points.chunks(CHUNK).map(chunk_vec).collect()
+    };
+    #[cfg(not(feature = "rayon"))]
+    let parts: Vec<Vec<f64>> = points.chunks(CHUNK).map(chunk_vec).collect();
+    for part in parts {
+        for (o, v) in out.iter_mut().zip(part) {
+            *o += v;
+        }
+    }
+}
+
+/// The derivative `ρ'(z/C²)` of a robust loss's contribution `C²·ρ(z/C²)`
+/// with respect to the squared residual `z`.
+fn robust_slope(z: f64, loss: Loss, fs2: f64) -> f64 {
+    let u = z / fs2;
+    match loss {
+        Loss::Linear => 1.0,
+        Loss::SoftL1 => 1.0 / (1.0 + u).sqrt(),
+        Loss::Huber => {
+            if u <= 1.0 {
+                1.0
+            } else {
+                1.0 / u.sqrt()
+            }
+        }
+        Loss::Cauchy => 1.0 / (1.0 + u),
+        Loss::Arctan => 1.0 / (1.0 + u * u),
+    }
+}
+
 /// The most intervals the unbinned normalization integral may use.
 const NORM_INTERVALS: usize = 200;
 
 /// A cost over the full parameter vector.
 pub(crate) type CostFn<'a> = &'a dyn Fn(&[f64]) -> f64;
+
+/// A model's gradient `∂f/∂p` at `x`, written into `out`.
+type ModelGrad = dyn Fn(f64, &[f64], &mut [f64]) + Send + Sync;
+
+/// A cost's gradient over the full parameter vector, written into `out`.
+pub(crate) type GradCostFn<'a> = &'a dyn Fn(&[f64], &mut [f64]);
 
 /// Everything a backend needs to minimize one fit.
 pub(crate) struct Fit<'a> {
@@ -70,6 +132,12 @@ pub(crate) struct Fit<'a> {
     /// For a SumW2-corrected fit of weighted events: the cost with squared
     /// weights, whose Hessian is the sandwich's middle.
     pub(crate) cost_w2: Option<CostFn<'a>>,
+    /// The cost's exact gradient, when the model has an analytic one and the
+    /// options allow it ([`FitOptions::gradient`]).
+    pub(crate) grad: Option<GradCostFn<'a>>,
+    /// The residuals' exact Jacobian, row-major (`n_residuals × n_params`),
+    /// when the model has an analytic gradient and the options allow it.
+    pub(crate) jacobian: Option<GradCostFn<'a>>,
     /// Degrees of freedom: fitted points + constraints − free parameters.
     pub(crate) ndf: usize,
     /// The fit options (strategy, tolerance, HESSE, MINOS, …).
@@ -165,6 +233,7 @@ fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
         Minimizer::DifferentialEvolution(cfg) => global::differential_evolution(fit, cfg),
         Minimizer::CmaEs(cfg) => cmaes::cma_es(fit, cfg),
         Minimizer::LevenbergMarquardt => lm::levenberg_marquardt(fit),
+        Minimizer::LBfgsB => lbfgsb::lbfgsb(fit),
         #[cfg(feature = "argmin")]
         Minimizer::NelderMead => nelder_mead::minimize(fit),
     }))
@@ -177,6 +246,7 @@ fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
 /// Its costs are over the parameters of the model whose `func` it holds.
 pub(crate) struct Prepared<'m> {
     func: &'m (dyn Fn(f64, &[f64]) -> f64 + Send + Sync),
+    grad: Option<&'m ModelGrad>,
     points: Vec<(f64, f64, f64)>,
     method: FitMethod,
     loss: Loss,
@@ -192,11 +262,9 @@ impl<'m> Prepared<'m> {
     /// Select the points of `all` that enter a fit under `opts`: those with `x`
     /// in `opts.range` (default: all), and for Neyman χ² only those with an
     /// error.
-    pub(crate) fn new(
-        all: &[Point],
-        func: &'m (dyn Fn(f64, &[f64]) -> f64 + Send + Sync),
-        opts: &FitOptions,
-    ) -> Prepared<'m> {
+    pub(crate) fn new(all: &[Point], model: &'m Model, opts: &FitOptions) -> Prepared<'m> {
+        let func = &*model.func;
+        let grad = model.grad.as_deref();
         let drop_empty = matches!(opts.method, FitMethod::Chi2);
         let points: Vec<(f64, f64, f64)> = all
             .iter()
@@ -228,6 +296,7 @@ impl<'m> Prepared<'m> {
         };
         Prepared {
             func,
+            grad,
             points,
             method: opts.method,
             loss: opts.loss,
@@ -294,6 +363,163 @@ impl<'m> Prepared<'m> {
             }
             FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => {
                 self.unbinned_cost(p, 1)
+            }
+        }
+    }
+
+    /// Whether the model has an analytic gradient (and so the cost one).
+    pub(crate) fn has_gradient(&self) -> bool {
+        self.grad.is_some()
+    }
+
+    /// Add the cost's gradient at `p` into `out` (one entry per parameter of
+    /// the model), from the model's analytic gradient: per point the cost
+    /// term's derivative with respect to `f` times `∂f/∂p`, and for the
+    /// unbinned likelihoods the normalization's `∂(∫f)/∂p`. A no-op without
+    /// a model gradient.
+    pub(crate) fn add_gradient(&self, p: &[f64], out: &mut [f64]) {
+        let Some(grad) = self.grad else {
+            return;
+        };
+        let func = self.func;
+        let np = p.len();
+        let (loss, fs2, method) = (self.loss, self.fs2, self.method);
+        // d(cost term)/df at a point (0 where the model was clamped).
+        let slope = |x: f64, y: f64, e: f64| -> f64 {
+            let raw = func(x, p);
+            match method {
+                FitMethod::Chi2 => {
+                    let d = (y - raw) / e;
+                    -2.0 * d * robust_slope(d * d, loss, fs2) / e
+                }
+                FitMethod::PearsonChi2 => {
+                    if raw <= 1e-300 {
+                        return 0.0;
+                    }
+                    let h = (y - raw) * (y - raw) / raw;
+                    robust_slope(h, loss, fs2) * (raw * raw - y * y) / (raw * raw)
+                }
+                FitMethod::Likelihood => {
+                    if raw <= 1e-300 {
+                        0.0
+                    } else if y > 0.0 {
+                        2.0 * (1.0 - y / raw)
+                    } else {
+                        2.0
+                    }
+                }
+                FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => {
+                    if raw <= 1e-300 { 0.0 } else { -2.0 * y / raw }
+                }
+            }
+        };
+        chunked_vec_sum(
+            &self.points,
+            np,
+            |&(x, y, e), acc, g| {
+                let c = slope(x, y, e);
+                if c != 0.0 {
+                    g.iter_mut().for_each(|v| *v = 0.0);
+                    grad(x, p, g);
+                    for (a, gk) in acc.iter_mut().zip(g.iter()) {
+                        *a += c * gk;
+                    }
+                }
+            },
+            out,
+        );
+        if self.unbinned() {
+            // The normalization N = ∫f and its gradient ∂N/∂pₖ = ∫∂f/∂pₖ.
+            let (lo, hi) = self.range;
+            let norm =
+                oxifit_formula::integrate_adaptive(|x| func(x, p), lo, hi, 1e-10, NORM_INTERVALS).0;
+            let g = std::cell::RefCell::new(vec![0.0; np]);
+            for k in 0..np {
+                let dn = oxifit_formula::integrate_adaptive(
+                    |x| {
+                        let mut g = g.borrow_mut();
+                        g.iter_mut().for_each(|v| *v = 0.0);
+                        grad(x, p, &mut g);
+                        g[k]
+                    },
+                    lo,
+                    hi,
+                    1e-10,
+                    NORM_INTERVALS,
+                )
+                .0;
+                out[k] += if self.method == FitMethod::ExtendedUnbinnedLikelihood {
+                    2.0 * dn
+                } else {
+                    2.0 * self.sum_w * dn / norm.max(1e-300)
+                };
+            }
+        }
+    }
+
+    /// Write the residuals' Jacobian at `p` into `out` (row-major, one row of
+    /// `p.len()` per residual): `dr/df · ∂f/∂p`, with each residual's
+    /// derivative in `f` taken exactly — including its limit where the
+    /// residual vanishes. A no-op without a model gradient or residuals.
+    pub(crate) fn residual_jacobian(&self, p: &[f64], out: &mut [f64]) {
+        let Some(grad) = self.grad else {
+            return;
+        };
+        if self.n_residuals() == 0 {
+            return;
+        }
+        let func = self.func;
+        let np = p.len();
+        let (loss, fs2, method) = (self.loss, self.fs2, self.method);
+        // dr/dd for r = sign(d)·√ρ(d²): ρ'(d²)·|d|/√ρ(d²), → 1 as d → 0.
+        let robust_dr = |d: f64| -> f64 {
+            let rho = robust(d * d, loss, fs2);
+            if d.abs() < 1e-12 || rho <= 0.0 {
+                1.0
+            } else {
+                robust_slope(d * d, loss, fs2) * d.abs() / rho.sqrt()
+            }
+        };
+        let dr_df = |x: f64, y: f64, e: f64| -> f64 {
+            let raw = func(x, p);
+            match method {
+                FitMethod::Chi2 => -robust_dr((y - raw) / e) / e,
+                FitMethod::PearsonChi2 => {
+                    if raw <= 1e-300 {
+                        return 0.0;
+                    }
+                    let d = (y - raw) / raw.sqrt();
+                    -robust_dr(d) * (y + raw) / (2.0 * raw * raw.sqrt())
+                }
+                FitMethod::Likelihood => {
+                    if raw <= 1e-300 {
+                        return 0.0;
+                    }
+                    let t = if y > 0.0 {
+                        raw - y + y * (y / raw).ln()
+                    } else {
+                        raw
+                    };
+                    // r = sign(f − y)·√(2t), so r² = 2t and dr/df = (dt/df)/r.
+                    let r = (2.0 * t).max(0.0).sqrt().copysign(raw - y);
+                    let dt = if y > 0.0 { 1.0 - y / raw } else { 1.0 };
+                    if r.abs() > 1e-8 {
+                        dt / r
+                    } else {
+                        // t ≈ (f − y)²/(2y), so r ≈ (f − y)/√y.
+                        1.0 / y.max(1e-300).sqrt()
+                    }
+                }
+                FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => 0.0,
+            }
+        };
+        let mut g = vec![0.0; np];
+        for (row, &(x, y, e)) in out.chunks_mut(np).zip(&self.points) {
+            let c = dr_df(x, y, e);
+            g.iter_mut().for_each(|v| *v = 0.0);
+            grad(x, p, &mut g);
+            for (o, gk) in row.iter_mut().zip(&g) {
+                *o = c * gk;
             }
         }
     }
@@ -395,6 +621,12 @@ pub(crate) struct DataTerm<'a> {
     pub(crate) gof: bool,
     /// The cost with squared weights, when a SumW2 correction applies.
     pub(crate) cost_w2: Option<CostFn<'a>>,
+    /// The data cost's gradient (added into `out`), when every model has an
+    /// analytic one.
+    pub(crate) grad: Option<GradCostFn<'a>>,
+    /// The data residuals' Jacobian (row-major, `n_residuals × n_params`),
+    /// when every model has an analytic gradient.
+    pub(crate) jacobian: Option<GradCostFn<'a>>,
 }
 
 /// Build the [`Fit`] for `model` on `all` under `opts` — the selected points,
@@ -408,10 +640,12 @@ pub(crate) fn with_fit<R>(
     opts: &FitOptions,
     body: impl FnOnce(&Fit) -> R,
 ) -> Option<(R, usize)> {
-    let prep = Prepared::new(all, &*model.func, opts);
+    let prep = Prepared::new(all, model, opts);
     let cost = |p: &[f64]| prep.cost(p);
     let residuals = |p: &[f64], out: &mut [f64]| prep.residuals(p, out);
     let cost_w2 = |p: &[f64]| prep.cost_w2(p);
+    let grad = |p: &[f64], out: &mut [f64]| prep.add_gradient(p, out);
+    let jac = |p: &[f64], out: &mut [f64]| prep.residual_jacobian(p, out);
     let term = DataTerm {
         cost: &cost,
         residuals: &residuals,
@@ -420,6 +654,8 @@ pub(crate) fn with_fit<R>(
         gof: prep.gof(),
         cost_w2: (prep.unbinned() && prep.weighted() && opts.sumw2)
             .then_some(&cost_w2 as CostFn<'_>),
+        grad: prep.has_gradient().then_some(&grad as GradCostFn<'_>),
+        jacobian: prep.has_gradient().then_some(&jac as GradCostFn<'_>),
     };
     with_terms(model, opts, &term, body)
 }
@@ -477,6 +713,27 @@ pub(crate) fn with_terms<R>(
         }
     };
     let cost_w2_fn = |p: &[f64]| term.cost_w2.map_or(f64::NAN, |c| c(p)) + penalty(p);
+    let grad_fn = |p: &[f64], out: &mut [f64]| {
+        calls.set(calls.get() + 1);
+        out.iter_mut().for_each(|o| *o = 0.0);
+        if let Some(g) = term.grad {
+            g(p, out);
+        }
+        for &(i, m, sd) in &penalties {
+            out[i] += 2.0 * (p[i] - m) / (sd * sd);
+        }
+    };
+    // The full Jacobian: the data rows, then one row per constraint
+    // (∂/∂pᵢ of (pᵢ − m)/σ is 1/σ).
+    let jac_fn = |p: &[f64], out: &mut [f64]| {
+        out.iter_mut().for_each(|o| *o = 0.0);
+        if let Some(j) = term.jacobian {
+            j(p, &mut out[..n_data_res * np]);
+        }
+        for (r, &(i, _, sd)) in penalties.iter().enumerate() {
+            out[(n_data_res + r) * np + i] = 1.0 / sd;
+        }
+    };
     let fit = Fit {
         model,
         cost: &cost,
@@ -488,6 +745,9 @@ pub(crate) fn with_terms<R>(
             n_data_res + penalties.len()
         },
         cost_w2: term.cost_w2.is_some().then_some(&cost_w2_fn as CostFn<'_>),
+        grad: (term.grad.is_some() && opts.gradient).then_some(&grad_fn as GradCostFn<'_>),
+        jacobian: (term.jacobian.is_some() && opts.gradient && n_data_res > 0)
+            .then_some(&jac_fn as GradCostFn<'_>),
         ndf: n_meas - n_free,
         opts,
         gof: term.gof,
@@ -573,5 +833,108 @@ fn robust(z: f64, loss: Loss, fs2: f64) -> f64 {
         }
         Loss::Cauchy => fs2 * (1.0 + z / fs2).ln(),
         Loss::Arctan => fs2 * (z / fs2).atan(),
+    }
+}
+
+#[cfg(test)]
+mod gradient_tests {
+    use super::*;
+    use crate::data::Point;
+
+    /// Every cost's analytic gradient matches a central difference of the cost.
+    #[test]
+    fn cost_gradients_match_finite_differences() {
+        let pts: Vec<Point> = (0..60)
+            .map(|i| {
+                let x = -3.0 + 0.1 * f64::from(i);
+                let y = (40.0 * (-0.5 * ((x - 0.3) / 0.8f64).powi(2)).exp() + 5.0).round();
+                Point::new(x, y, y.sqrt().max(1.0))
+            })
+            .collect();
+        let model = (Model::gaussian("g") + Model::polynomial("c", 0))
+            .with_params(vec![30.0, 0.1, 1.1, 4.0])
+            .constrain("c.p0", 5.0, 2.0);
+        for method in [
+            FitMethod::Chi2,
+            FitMethod::PearsonChi2,
+            FitMethod::Likelihood,
+            FitMethod::UnbinnedLikelihood,
+            FitMethod::ExtendedUnbinnedLikelihood,
+        ] {
+            for loss in [Loss::Linear, Loss::Cauchy] {
+                let opts = FitOptions::new().method(method).loss(loss).range(-3.0, 3.0);
+                with_fit(&pts, &model, &opts, |fit| {
+                    let grad = fit.grad.expect("the model has a gradient");
+                    let p = model.params.clone();
+                    let mut g = vec![0.0; p.len()];
+                    grad(&p, &mut g);
+                    for k in 0..p.len() {
+                        let h = 1e-5 * p[k].abs().max(1.0);
+                        let (mut up, mut down) = (p.clone(), p.clone());
+                        up[k] += h;
+                        down[k] -= h;
+                        let num = ((fit.cost)(&up) - (fit.cost)(&down)) / (2.0 * h);
+                        let rel = (g[k] - num).abs() / num.abs().max(1.0);
+                        assert!(rel < 1e-5, "{method:?}/{loss:?} p{k}: {} vs {num}", g[k]);
+                    }
+                })
+                .unwrap();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod jacobian_tests {
+    use super::*;
+    use crate::data::Point;
+
+    /// The residuals' exact Jacobian matches a central difference.
+    #[test]
+    fn residual_jacobians_match_finite_differences() {
+        let pts: Vec<Point> = (0..40)
+            .map(|i| {
+                let x = -2.0 + 0.1 * f64::from(i);
+                let y = (30.0 * (-0.5 * ((x - 0.2) / 0.7f64).powi(2)).exp() + 4.0).round();
+                Point::new(x, y, y.sqrt().max(1.0))
+            })
+            .collect();
+        let model = (Model::gaussian("g") + Model::polynomial("c", 0))
+            .with_params(vec![25.0, 0.1, 0.9, 3.0])
+            .constrain("g.sigma", 0.7, 0.1);
+        for method in [
+            FitMethod::Chi2,
+            FitMethod::PearsonChi2,
+            FitMethod::Likelihood,
+        ] {
+            for loss in [Loss::Linear, Loss::SoftL1] {
+                let opts = FitOptions::new().method(method).loss(loss);
+                with_fit(&pts, &model, &opts, |fit| {
+                    let jac = fit.jacobian.expect("an analytic Jacobian");
+                    let (n, p) = (fit.n_residuals, model.params.clone());
+                    let np = p.len();
+                    let mut j = vec![0.0; n * np];
+                    jac(&p, &mut j);
+                    for k in 0..np {
+                        let h = 1e-6 * p[k].abs().max(1.0);
+                        let (mut up, mut down) = (p.clone(), p.clone());
+                        up[k] += h;
+                        down[k] -= h;
+                        let (mut ru, mut rd) = (vec![0.0; n], vec![0.0; n]);
+                        (fit.residuals)(&up, &mut ru);
+                        (fit.residuals)(&down, &mut rd);
+                        for r in 0..n {
+                            let num = (ru[r] - rd[r]) / (2.0 * h);
+                            let got = j[r * np + k];
+                            assert!(
+                                (got - num).abs() < 1e-5 * num.abs().max(1.0),
+                                "{method:?}/{loss:?} row {r} p{k}: {got} vs {num}"
+                            );
+                        }
+                    }
+                })
+                .unwrap();
+            }
+        }
     }
 }

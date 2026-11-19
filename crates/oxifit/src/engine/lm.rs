@@ -1,8 +1,8 @@
 //! Levenberg–Marquardt: Gauss–Newton steps on the residual vector, damped
 //! toward gradient descent when a step fails (Marquardt's diagonal scaling).
 //! Every cost here is a sum of squared residuals (the likelihood as signed
-//! deviance residuals), so it applies to all of them. The Jacobian is a
-//! forward difference; limits are enforced by projecting each step back into
+//! deviance residuals), so it applies to all of them. The Jacobian is exact
+//! when the model has an analytic gradient, else a forward difference; limits are enforced by projecting each step back into
 //! them. It converges in few iterations on least-squares problems; MIGRAD
 //! then polishes the point and HESSE supplies the errors, as for every
 //! Minuit-finished backend.
@@ -52,17 +52,30 @@ pub(crate) fn levenberg_marquardt(fit: &Fit) -> FitResult {
 
     if cost.is_finite() {
         'outer: for _ in 0..MAX_ITERS {
-            // Forward-difference Jacobian, stepping inward at an upper limit.
-            for k in 0..d {
-                let mut h = 1e-7 * x[k].abs().max(fit.step(free[k], x[k]));
-                if x[k] + h > bounds[k].1 {
-                    h = -h;
+            if let Some(exact) = fit.jacobian {
+                // The exact Jacobian, its free-parameter columns.
+                let full = scatter(&seed, &free, &x);
+                let np = full.len();
+                let mut all = vec![0.0; n * np];
+                exact(&full, &mut all);
+                for (row, src) in jac.iter_mut().zip(all.chunks(np)) {
+                    for (k, &i) in free.iter().enumerate() {
+                        row[k] = src[i];
+                    }
                 }
-                let mut xh = x.clone();
-                xh[k] += h;
-                residuals(&xh, &mut r_step);
-                for (row, (&rs, &r0)) in jac.iter_mut().zip(r_step.iter().zip(&r)) {
-                    row[k] = (rs - r0) / h;
+            } else {
+                // Forward-difference Jacobian, stepping inward at an upper limit.
+                for k in 0..d {
+                    let mut h = 1e-7 * x[k].abs().max(fit.step(free[k], x[k]));
+                    if x[k] + h > bounds[k].1 {
+                        h = -h;
+                    }
+                    let mut xh = x.clone();
+                    xh[k] += h;
+                    residuals(&xh, &mut r_step);
+                    for (row, (&rs, &r0)) in jac.iter_mut().zip(r_step.iter().zip(&r)) {
+                        row[k] = (rs - r0) / h;
+                    }
                 }
             }
             let jtj: Vec<Vec<f64>> = (0..d)

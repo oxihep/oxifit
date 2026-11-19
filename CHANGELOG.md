@@ -8,6 +8,23 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Analytic gradients.** `Model::with_gradient(|x, p, g| …)` supplies
+  `∂f/∂p`; the Gaussian, exponential and polynomial shapes have theirs, a
+  sum of models has one when every part does, and `Model::check_gradient`
+  compares with finite differences. Every cost (χ², Pearson, both
+  likelihoods, unbinned with its normalization, robust losses, Gaussian
+  constraints, simultaneous fits) then has an exact gradient, used by:
+  MIGRAD (minuit2's analytic path, falling back to finite differences when
+  it stalls far from the minimum, as minuit2 0.5's does), the error matrix
+  (a central difference of the gradient — `2n` gradient calls instead of
+  HESSE's `~2n²` cost calls), and Levenberg–Marquardt's Jacobian.
+  `FitOptions::with_gradient(false)` turns it off. A 30-parameter fit of
+  ten peaks: 186 → 149 ms.
+- **`Minimizer::LBfgsB`**: L-BFGS-B, projected limited-memory quasi-Newton
+  within the limits (SciPy's and zfit's gradient minimizer), then MIGRAD +
+  HESSE; central differences without an analytic gradient. The ten-peak fit:
+  126 ms.
+
 - **The `rayon` feature.** A cost over more than 4096 points (χ², binned and
   unbinned likelihoods, the residuals) is summed in parallel chunks; toys,
   profile points and contour rays are fitted in parallel. The chunk sums

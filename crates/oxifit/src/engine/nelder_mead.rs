@@ -184,6 +184,8 @@ mod tests {
             residuals: &|_, _| {},
             n_residuals: 0,
             cost_w2: None,
+            grad: None,
+            jacobian: None,
             ndf: 4,
             opts: &opts,
             gof: true,
