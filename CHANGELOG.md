@@ -6,6 +6,16 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A comparison with ROOT, iminuit, scipy and zfit** (`comparison/`): the
+  same data, models, seeds and costs fitted with each, with an agreement
+  check, timings, and a side-by-side look at the code. Runs with
+  `comparison/run_all.sh`; the `fit_comparison` example is oxifit's side.
+- **`tests/reference_fitters.rs`**: the binned χ² and likelihood fits of the
+  comparison against ROOT 6.40 and iminuit 2.33's parameters, errors and
+  minima, for both model forms and three minimizers.
+
 ### Changed
 
 - **minuit2 0.5's numerical-gradient panic no longer prints.** oxifit

@@ -143,6 +143,18 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay times — binned χ², binned likelihood and unbinned likelihood — and why a likelihood beats a χ² on sparse tails |
 | [`peak_search`](crates/oxifit/examples/peak_search.rs) | A narrow peak at an unknown mass: MIGRAD from a blind seed misses it, multistart, differential evolution and CMA-ES find it |
 
+## Compared with ROOT, iminuit, scipy and zfit
+
+[`comparison/`](comparison) fits the same data with each tool — a binned peak
+(χ² and likelihood) and extended unbinned fits of 10⁵ and 10⁶ events — and
+checks that they agree (every parameter within 0.05σ of iminuit; the binned
+fits within `10⁻⁷σ`, now a test against ROOT and iminuit). On one core oxifit
+fits binned data as fast as ROOT and 4–6× faster than iminuit, and large
+unbinned data about 2× slower than RooFit, which normalizes its shapes
+analytically; with the `rayon` feature it is the fastest of all (10⁶ events:
+0.22 s, against RooFit's 0.99 s and zfit's 0.37 s on four cores). The
+comparison also covers the code each tool needs and what each does best.
+
 ## The oxihep family
 
 Rust crates for high-energy physics, split the way Python's
