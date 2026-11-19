@@ -48,6 +48,7 @@ mod result;
 mod rng;
 mod scan;
 mod simultaneous;
+mod splot;
 mod template;
 mod toys;
 
@@ -69,6 +70,7 @@ pub use result::{
 };
 pub use scan::{Contour, FitError, Profile};
 pub use simultaneous::Simultaneous;
+pub use splot::SWeights;
 #[cfg(feature = "pyhf")]
 pub use template::Workspace;
 pub use template::{

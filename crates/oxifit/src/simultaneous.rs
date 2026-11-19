@@ -206,6 +206,7 @@ impl Simultaneous {
             counted: true,
             gof: preps.iter().all(Prepared::gof),
             cost_w2: sumw2.then_some(&cost_w2 as CostFn<'_>),
+            scores: None,
             grad: has_grad.then_some(&grad as GradCostFn<'_>),
             jacobian: (has_grad && all_res).then_some(&jac as GradCostFn<'_>),
         };

@@ -114,7 +114,7 @@ const NESTED_INTERVALS: usize = 48;
 
 /// `∫ f` over a region of 1–3 variables (one `(lo, hi)` each): bounded,
 /// globally adaptive Gauss–Kronrod, nested for 2-D and 3-D.
-fn integrate_region(f: &dyn Fn(&[f64]) -> f64, region: &[(f64, f64)]) -> f64 {
+pub(crate) fn integrate_region(f: &dyn Fn(&[f64]) -> f64, region: &[(f64, f64)]) -> f64 {
     use oxifit_formula::integrate_adaptive as quad;
     match *region {
         [(a, b)] => quad(|x| f(&[x]), a, b, 1e-10, NORM_INTERVALS).0,
@@ -160,6 +160,11 @@ type NdPoint = ([f64; 3], f64, f64);
 /// A cost's gradient over the full parameter vector, written into `out`.
 pub(crate) type GradCostFn<'a> = &'a dyn Fn(&[f64], &mut [f64]);
 
+/// For the asymptotically correct covariance of a weighted fit: at the
+/// parameters, over the free parameters (with finite-difference steps), the
+/// matrix `D = Σₑ sₑ·sₑᵀ` of the events' weighted scores `sₑ = wₑ·∂ln Lₑ/∂θ`.
+pub(crate) type ScoreFn<'a> = &'a dyn Fn(&[f64], &[usize], &[f64]) -> Vec<Vec<f64>>;
+
 /// Everything a backend needs to minimize one fit.
 pub(crate) struct Fit<'a> {
     /// The model: parameter names, seeds, and constraints.
@@ -175,6 +180,9 @@ pub(crate) struct Fit<'a> {
     /// For a SumW2-corrected fit of weighted events: the cost with squared
     /// weights, whose Hessian is the sandwich's middle.
     pub(crate) cost_w2: Option<CostFn<'a>>,
+    /// For the asymptotically correct covariance of weighted events
+    /// ([`FitOptions::asymptotic`]): the scores' outer-product sum.
+    pub(crate) scores: Option<ScoreFn<'a>>,
     /// The cost's exact gradient, when the model has an analytic one and the
     /// options allow it ([`FitOptions::gradient`]).
     pub(crate) grad: Option<GradCostFn<'a>>,
@@ -306,6 +314,7 @@ pub(crate) fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
     }))
     .unwrap_or_else(|_| failed(fit.model))
     .with_sumw2(fit)
+    .with_asymptotic(fit)
 }
 
 /// One dataset's cost under its options: the selected points, the method,
@@ -646,6 +655,49 @@ impl Prepared {
         )
     }
 
+    /// `D = Σₑ sₑ·sₑᵀ` over the free parameters `free` (steps `h`): each
+    /// event's score `sₑ = wₑ·∂ln f(xₑ)/∂θ` less its share of the
+    /// normalization's — `wₑ·∂ln N/∂θ` for the unbinned likelihood,
+    /// `(wₑ/Σw)·∂N/∂θ` for the extended one, whose `−ln L` has `+N`.
+    pub(crate) fn score_outer(&self, p: &[f64], free: &[usize], h: &[f64]) -> Vec<Vec<f64>> {
+        let n = free.len();
+        let func = &*self.func;
+        let dim = self.dim;
+        let shifted = |k: usize, sign: f64| {
+            let mut q = p.to_vec();
+            q[free[k]] += sign * h[k];
+            q
+        };
+        let ups: Vec<Vec<f64>> = (0..n).map(|k| shifted(k, 1.0)).collect();
+        let downs: Vec<Vec<f64>> = (0..n).map(|k| shifted(k, -1.0)).collect();
+        let norm = self.norm(p).max(1e-300);
+        let dnorm: Vec<f64> = (0..n)
+            .map(|k| (self.norm(&ups[k]) - self.norm(&downs[k])) / (2.0 * h[k]))
+            .collect();
+        let extended = self.method == FitMethod::ExtendedUnbinnedLikelihood;
+        let mut d = vec![vec![0.0; n]; n];
+        let mut s = vec![0.0; n];
+        let ln = |x: &[f64], q: &[f64]| func(x, q).max(1e-300).ln();
+        for &(x, w, _) in &self.points {
+            let x = &x[..dim];
+            for k in 0..n {
+                let dlnf = (ln(x, &ups[k]) - ln(x, &downs[k])) / (2.0 * h[k]);
+                let share = if extended {
+                    w / self.sum_w.max(1e-300) * dnorm[k]
+                } else {
+                    w * dnorm[k] / norm
+                };
+                s[k] = w * dlnf - share;
+            }
+            for a in 0..n {
+                for b in 0..n {
+                    d[a][b] += s[a] * s[b];
+                }
+            }
+        }
+        d
+    }
+
     /// For the SumW2 sandwich: the unbinned cost with squared weights (whose
     /// extended term scales by Σw²/Σw, as in RooFit); otherwise the cost.
     pub(crate) fn cost_w2(&self, p: &[f64]) -> f64 {
@@ -745,6 +797,9 @@ pub(crate) struct DataTerm<'a> {
     pub(crate) gof: bool,
     /// The cost with squared weights, when a SumW2 correction applies.
     pub(crate) cost_w2: Option<CostFn<'a>>,
+    /// The events' score outer products, when the asymptotic correction
+    /// applies.
+    pub(crate) scores: Option<ScoreFn<'a>>,
     /// The data cost's gradient (added into `out`), when every model has an
     /// analytic one.
     pub(crate) grad: Option<GradCostFn<'a>>,
@@ -771,6 +826,7 @@ pub(crate) fn with_fit<R>(
     let cost_w2 = |p: &[f64]| prep.cost_w2(p);
     let grad = |p: &[f64], out: &mut [f64]| prep.add_gradient(p, out);
     let jac = |p: &[f64], out: &mut [f64]| prep.residual_jacobian(p, out);
+    let scores = |p: &[f64], free: &[usize], h: &[f64]| prep.score_outer(p, free, h);
     let term = DataTerm {
         cost: &cost,
         residuals: &residuals,
@@ -780,6 +836,7 @@ pub(crate) fn with_fit<R>(
         gof: prep.gof(),
         cost_w2: (prep.unbinned() && prep.weighted() && opts.sumw2)
             .then_some(&cost_w2 as CostFn<'_>),
+        scores: (prep.unbinned() && opts.asymptotic).then_some(&scores as ScoreFn<'_>),
         grad: prep.has_gradient().then_some(&grad as GradCostFn<'_>),
         jacobian: prep.has_gradient().then_some(&jac as GradCostFn<'_>),
     };
@@ -871,6 +928,7 @@ pub(crate) fn with_terms<R>(
             n_data_res + penalties.len()
         },
         cost_w2: term.cost_w2.is_some().then_some(&cost_w2_fn as CostFn<'_>),
+        scores: term.scores,
         grad: (term.grad.is_some() && opts.gradient).then_some(&grad_fn as GradCostFn<'_>),
         jacobian: (term.jacobian.is_some() && opts.gradient && n_data_res > 0)
             .then_some(&jac_fn as GradCostFn<'_>),
@@ -884,6 +942,59 @@ pub(crate) fn with_terms<R>(
 }
 
 impl FitResult {
+    /// Replace the covariance of a weighted unbinned fit by the
+    /// asymptotically correct one (Langenbruch, EPJC 82 (2022) 393), when the
+    /// fit asks for it: `V = C·D·C`, `C` HESSE's covariance (the inverse
+    /// Hessian of `−ln L`) and `D = Σₑ sₑ·sₑᵀ` the events' weighted scores.
+    /// Unweighted, `D` is the Fisher information and `V = C`.
+    fn with_asymptotic(mut self, fit: &Fit) -> FitResult {
+        let (Some(scores), Some(cov)) = (fit.scores, self.covariance.as_ref()) else {
+            return self;
+        };
+        if !self.valid {
+            return self;
+        }
+        let free = fit.free();
+        let n = free.len();
+        if cov.len() != n {
+            return self;
+        }
+        let h: Vec<f64> = (0..n)
+            .map(|k| {
+                let e = cov[k][k].sqrt();
+                if e.is_finite() && e > 0.0 {
+                    1e-3 * e
+                } else {
+                    1e-6 * self.params[free[k]].abs().max(1.0)
+                }
+            })
+            .collect();
+        let d = scores(&self.params, &free, &h);
+        let cd: Vec<Vec<f64>> = (0..n)
+            .map(|a| {
+                (0..n)
+                    .map(|b| (0..n).map(|k| cov[a][k] * d[k][b]).sum())
+                    .collect()
+            })
+            .collect();
+        let v: Vec<Vec<f64>> = (0..n)
+            .map(|a| {
+                (0..n)
+                    .map(|b| (0..n).map(|k| cd[a][k] * cov[k][b]).sum())
+                    .collect()
+            })
+            .collect();
+        for (k, &i) in free.iter().enumerate() {
+            self.errors[i] = if v[k][k] > 0.0 {
+                v[k][k].sqrt()
+            } else {
+                f64::NAN
+            };
+        }
+        self.covariance = Some(v);
+        self
+    }
+
     /// Replace the covariance of a weighted fit by the SumW2 sandwich
     /// `V = H⁻¹·W·H⁻¹` (RooFit's `SumW2Error`), when the fit asks for it. With
     /// the cost `F = −2 ln L`, HESSE's covariance is `C = 2·H_F⁻¹`, so

@@ -178,6 +178,18 @@ let fit = model.fitter().fit(&FitOptions::new());
 let limit = HypoTest::new(model.fitter(), "mu")?.upper_limit(0.95, (0.0, 10.0))?;
 ```
 
+## sWeights and weighted fits
+
+`SWeights::compute(&events, &[&signal, &background], &yields, &opts)` turns an
+extended fit in a discriminating variable (a mass) into per-event weights for
+each species (sPlot, Pivk and Le Diberder); a weighted unbinned fit of another
+variable with the signal weights measures the signal alone. Its covariance
+needs care: `FitOptions::with_asymptotic_errors(true)` gives the
+asymptotically correct one (Langenbruch), right for weights of any sign and
+size, where SumW2 and the naive errors are not — on the `splot_lifetime`
+example's toys the pull widths are 1.00 (asymptotic), 1.37 (naive) and 1.46
+(SumW2).
+
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,
@@ -219,6 +231,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay times — binned χ², binned likelihood and unbinned likelihood — and why a likelihood beats a χ² on sparse tails |
 | [`peak_search`](crates/oxifit/examples/peak_search.rs) | A narrow peak at an unknown mass: MIGRAD from a blind seed misses it, multistart, differential evolution and CMA-ES find it |
 | [`template_fit`](crates/oxifit/examples/template_fit.rs) | A HistFactory-style search: signal, top and W+jets templates in a signal and a control region, with normalization, jet-energy-scale, MC-statistics and luminosity uncertainties — pre/post-fit yields, MINOS, pulls, the impact ranking, significance and the CLs limit with its band, checked with toys |
+| [`splot_lifetime`](crates/oxifit/examples/splot_lifetime.rs) | A B⁰ lifetime from sWeights: an extended mass fit, the weights, a weighted decay-time fit with naive, SumW2 and asymptotic errors, and 300 toys showing only the asymptotic ones cover |
 | [`resonance_search`](crates/oxifit/examples/resonance_search.rs) | A complete bump hunt: background-function choice (likelihood-ratio test) and its spurious signal, local significance vs mass, the look-elsewhere correction from toy scans, the signal fit, and CLs limits with the expected band, cross-checked with toys (`--release`: a few seconds) |
 
 ## Compared with ROOT, iminuit, scipy and zfit

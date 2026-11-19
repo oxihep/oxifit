@@ -245,6 +245,7 @@ impl CostRefit<'_> {
             counted: c.n_measurements().is_some(),
             gof: c.is_gof(),
             cost_w2: None,
+            scores: None,
             grad: c.has_gradient().then_some(&grad as GradCostFn<'_>),
             jacobian: None,
         };
