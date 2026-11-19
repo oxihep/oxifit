@@ -6,15 +6,42 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
-### Fixed
+### Breaking
 
-- **A fit could panic.** From some poor seeds the numerical gradient in the
-  `minuit2` 0.5 dependency calls `f64::clamp` with its bounds reversed, which
-  panics; the panic unwound through `fit`/`fit_opts` into the caller. The
-  engine now catches a panic from the minimizer and returns an invalid
-  `FitResult` (the default panic hook still prints the message).
+- **`FitResult` is `#[non_exhaustive]`** and gains `fval` (the minimized
+  cost), `edm` (Minuit2's estimated distance to the minimum) and `nfcn` (cost
+  evaluations, HESSE and MINOS included). Code that built a `FitResult` with a
+  struct literal uses `FitResult::new(params, errors, chi2, ndf, valid)` and
+  sets the remaining public fields.
+- **`chi2` is `NaN` under a robust loss**, whose cost is no χ²; the cost is in
+  `fval`, and `p_value()` is `NaN` too. Without a robust loss `chi2 == fval`
+  as before.
+- `Minimizer` has new variants, two of which carry settings.
+
+### Added
+
+- **Global minimizers** for a seed that may sit in the wrong basin:
+  `Minimizer::MultiStart(MultiStart::new(n))` runs `n` local fits from a
+  Latin hypercube over the parameter limits and keeps the lowest;
+  `Minimizer::DifferentialEvolution(DifferentialEvolution::new())` evolves a
+  population over the limits (DE/rand/1/bin) and polishes the best point with
+  MIGRAD. Both search inside each free parameter's limits, are reproducible
+  from their `seed`, and end with MIGRAD + HESSE like any Minuit fit. On a
+  peak fit seeded across the whole range (200 toys), MIGRAD found the peak in
+  35, multistart and differential evolution in all 200.
+- `Minimizer::Minuit2Combined` (MIGRAD with a SIMPLEX fallback, ROOT's
+  `"Minimize"`) and `Minimizer::Simplex`.
+- `FitOptions::strategy`, `tolerance` and `max_fcn` for Minuit2 (ROOT's
+  `SetStrategy`, `SetTolerance`, `SetMaxFunctionCalls`).
+- The `peak_search` example.
+
+- `erf`, `erfc` and `lgamma` (`TMath::Erf`, `TMath::Erfc`, `TMath::LnGamma`)
+  in formulas — enough for an error-function turn-on curve.
 
 ### Changed
+
+- The engine is split into the Minuit2 backends, the global searches and the
+  Nelder–Mead backend, sharing one finishing step (HESSE, MINOS, the result).
 
 - **HESSE runs after MIGRAD by default**, as in ROOT's `Fit`: `errors` and
   `covariance` now come from a finite-difference Hessian at the minimum rather
@@ -22,10 +49,13 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
   positive-definite is reported invalid. `FitOptions::with_hesse(false)` turns
   it off (e.g. for many toy fits where only the values matter).
 
-### Added
+### Fixed
 
-- `erf`, `erfc` and `lgamma` (`TMath::Erf`, `TMath::Erfc`, `TMath::LnGamma`)
-  in formulas — enough for an error-function turn-on curve.
+- **A fit could panic.** From some poor seeds the numerical gradient in the
+  `minuit2` 0.5 dependency calls `f64::clamp` with its bounds reversed, which
+  panics; the panic unwound through `fit`/`fit_opts` into the caller. The
+  engine now catches a panic from the minimizer and returns an invalid
+  `FitResult` (the default panic hook still prints the message).
 
 ### Testing
 

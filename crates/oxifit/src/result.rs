@@ -22,6 +22,20 @@ pub enum FitMethod {
 }
 
 /// Which optimizer minimizes the cost.
+///
+/// The local minimizers ([`Minuit2`](Self::Minuit2),
+/// [`Minuit2Combined`](Self::Minuit2Combined), [`Simplex`](Self::Simplex)) start
+/// from the model's parameters and find the nearest minimum. The global searches
+/// ([`MultiStart`](Self::MultiStart),
+/// [`DifferentialEvolution`](Self::DifferentialEvolution)) look over a box of
+/// parameter values first — useful when the seed may sit in the wrong basin
+/// (a peak whose position is unknown, a multimodal model) — and then polish
+/// the best point with MIGRAD, so every Minuit-based result carries MIGRAD +
+/// HESSE values, errors, covariance and validity.
+///
+/// The global box is each free parameter's limits when it has both; give the
+/// parameters you want searched a [`limit`](crate::Model::limit). A parameter
+/// with an open side is searched 10 initial steps beyond its seed on that side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Minimizer {
@@ -30,6 +44,22 @@ pub enum Minimizer {
     /// request) asymmetric MINOS errors. The default, always available.
     #[default]
     Minuit2,
+    /// MIGRAD, falling back to SIMPLEX (and MIGRAD again from its result) when
+    /// MIGRAD fails — ROOT's `"Minimize"` algorithm. Slower only on failure.
+    Minuit2Combined,
+    /// Minuit2's SIMPLEX method alone: gradient-free and robust far from the
+    /// minimum but slow to converge; HESSE supplies the errors.
+    Simplex,
+    /// A local minimization (MIGRAD, falling back to SIMPLEX as in
+    /// [`Minuit2Combined`](Self::Minuit2Combined)) from the model's seed and
+    /// from `starts − 1` more points spread over the search box (a Latin
+    /// hypercube); the lowest minimum wins. Costs about `starts` local fits.
+    MultiStart(MultiStart),
+    /// Differential evolution — a population-based global search (in the
+    /// genetic-algorithm family) over the search box, then MIGRAD from the best
+    /// point. Costs thousands of cost evaluations, but finds the global
+    /// minimum of a multimodal cost far more reliably than one local fit.
+    DifferentialEvolution(DifferentialEvolution),
     /// Gradient-free Nelder–Mead simplex via the
     /// [`argmin`](https://crates.io/crates/argmin) crate (requires the `argmin`
     /// feature). Parameter errors come from a numerical Hessian at the minimum;
@@ -37,6 +67,104 @@ pub enum Minimizer {
     #[cfg(feature = "argmin")]
     NelderMead,
 }
+
+/// Settings for [`Minimizer::MultiStart`].
+///
+/// ```
+/// # use oxifit::{FitOptions, Minimizer, MultiStart};
+/// let opts = FitOptions::new().minimizer(Minimizer::MultiStart(MultiStart::new(30).seed(7)));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MultiStart {
+    /// Number of local minimizations, the model's own seed included (default 20).
+    pub starts: usize,
+    /// Seed of the generator placing the starts: the same seed gives the same
+    /// fit.
+    pub seed: u64,
+}
+
+impl MultiStart {
+    /// `starts` local minimizations (at least one: from the model's seed).
+    #[must_use]
+    pub fn new(starts: usize) -> MultiStart {
+        MultiStart {
+            starts,
+            seed: DEFAULT_SEED,
+        }
+    }
+    /// Set the generator seed.
+    #[must_use]
+    pub fn seed(mut self, seed: u64) -> MultiStart {
+        self.seed = seed;
+        self
+    }
+}
+
+impl Default for MultiStart {
+    fn default() -> MultiStart {
+        MultiStart::new(20)
+    }
+}
+
+/// Settings for [`Minimizer::DifferentialEvolution`].
+///
+/// ```
+/// # use oxifit::{DifferentialEvolution, FitOptions, Minimizer};
+/// let de = DifferentialEvolution::new().population(40).seed(1);
+/// let opts = FitOptions::new().minimizer(Minimizer::DifferentialEvolution(de));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DifferentialEvolution {
+    /// Population size; `None` (the default) is 15 per free parameter,
+    /// between 20 and 300.
+    pub population: Option<usize>,
+    /// The most generations to evolve (default 1000). The search stops earlier
+    /// once every member's cost is within 0.01 of the best.
+    pub generations: usize,
+    /// Seed of the generator: the same seed gives the same fit.
+    pub seed: u64,
+}
+
+impl DifferentialEvolution {
+    /// The default settings.
+    #[must_use]
+    pub fn new() -> DifferentialEvolution {
+        DifferentialEvolution {
+            population: None,
+            generations: 1000,
+            seed: DEFAULT_SEED,
+        }
+    }
+    /// Set the population size (at least 4).
+    #[must_use]
+    pub fn population(mut self, n: usize) -> DifferentialEvolution {
+        self.population = Some(n);
+        self
+    }
+    /// Set the most generations to evolve.
+    #[must_use]
+    pub fn generations(mut self, n: usize) -> DifferentialEvolution {
+        self.generations = n;
+        self
+    }
+    /// Set the generator seed.
+    #[must_use]
+    pub fn seed(mut self, seed: u64) -> DifferentialEvolution {
+        self.seed = seed;
+        self
+    }
+}
+
+impl Default for DifferentialEvolution {
+    fn default() -> DifferentialEvolution {
+        DifferentialEvolution::new()
+    }
+}
+
+/// The global searches' default generator seed.
+const DEFAULT_SEED: u64 = 0x6F78_6966_6974; // "oxifit"
 
 /// A robust loss `ρ` applied to each squared residual of a least-squares fit
 /// ([`Chi2`](FitMethod::Chi2) / [`PearsonChi2`](FitMethod::PearsonChi2)) — the
@@ -87,6 +215,17 @@ pub struct FitOptions {
     pub hesse: bool,
     /// Which optimizer backend to use.
     pub minimizer: Minimizer,
+    /// Minuit2 strategy: `0` (fast, fewer derivative calls), `1` (default),
+    /// `2` (careful: more accurate derivatives and covariance, slower) — ROOT's
+    /// `SetStrategy`. Applies to MIGRAD, HESSE and MINOS.
+    pub strategy: u32,
+    /// Minuit2 convergence tolerance: MIGRAD stops once the estimated distance
+    /// to the minimum is below `0.002 × tolerance` (default `0.1`, ROOT's
+    /// default). Lower it to locate the minimum more precisely.
+    pub tolerance: f64,
+    /// Cap on the cost evaluations of one Minuit2 minimization; `None` (the
+    /// default) is Minuit2's own `200 + 100·n + 5·n²` for `n` free parameters.
+    pub max_fcn: Option<usize>,
     /// Robust [`Loss`] applied to each squared residual (least-squares costs
     /// only; ignored by [`Likelihood`](FitMethod::Likelihood)).
     pub loss: Loss,
@@ -104,6 +243,9 @@ impl Default for FitOptions {
             minos: false,
             hesse: true,
             minimizer: Minimizer::default(),
+            strategy: 1,
+            tolerance: 0.1,
+            max_fcn: None,
             loss: Loss::default(),
             f_scale: 1.0,
         }
@@ -146,6 +288,24 @@ impl FitOptions {
         self.minimizer = minimizer;
         self
     }
+    /// Set the Minuit2 strategy (see [`strategy`](Self::strategy)).
+    #[must_use]
+    pub fn strategy(mut self, level: u32) -> FitOptions {
+        self.strategy = level;
+        self
+    }
+    /// Set the Minuit2 convergence tolerance (see [`tolerance`](Self::tolerance)).
+    #[must_use]
+    pub fn tolerance(mut self, tolerance: f64) -> FitOptions {
+        self.tolerance = tolerance;
+        self
+    }
+    /// Cap the cost evaluations of one Minuit2 minimization.
+    #[must_use]
+    pub fn max_fcn(mut self, max: usize) -> FitOptions {
+        self.max_fcn = Some(max);
+        self
+    }
     /// Use a robust [`Loss`] to down-weight outliers (least-squares costs only).
     #[must_use]
     pub fn loss(mut self, loss: Loss) -> FitOptions {
@@ -162,6 +322,7 @@ impl FitOptions {
 
 /// The outcome of a fit ([`FitExt::fit`](crate::FitExt::fit)).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct FitResult {
     /// Best-fit parameter values (in the model's parameter order).
     pub params: Vec<f64>,
@@ -176,15 +337,53 @@ pub struct FitResult {
     /// order (row-major), when Minuit2 produced one; `None` otherwise. With no
     /// fixed parameters this is the full parameter covariance.
     pub covariance: Option<Vec<Vec<f64>>>,
-    /// Chi-square at the minimum.
+    /// Goodness-of-fit statistic at the minimum: the χ² (Neyman or Pearson) or,
+    /// for [`FitMethod::Likelihood`], the Poisson likelihood ratio
+    /// `2·Σ [f − y + y·ln(y/f)]` (χ²-distributed for large counts). `NaN` under
+    /// a robust [`Loss`], whose cost is no χ² — read [`fval`](Self::fval) then.
     pub chi2: f64,
+    /// The minimized cost itself (equal to [`chi2`](Self::chi2) without a
+    /// robust loss).
+    pub fval: f64,
+    /// Minuit2's estimated distance to the minimum (EDM) — how far, in cost,
+    /// the true minimum may still lie; `NaN` from a backend without one.
+    pub edm: f64,
+    /// Cost evaluations the fit took in all: the minimization (a global
+    /// search's included), HESSE and MINOS.
+    pub nfcn: usize,
     /// Degrees of freedom: fitted points − free parameters.
     pub ndf: usize,
-    /// Whether Minuit2 reported a valid minimum.
+    /// Whether the minimizer reported a valid minimum.
     pub valid: bool,
 }
 
 impl FitResult {
+    /// A result from its values — e.g. a fit stored on disk, or one built by
+    /// hand for a plot. The cost [`fval`](Self::fval) is `chi2`; there are no
+    /// MINOS errors or covariance, the EDM is `NaN` and `nfcn` is `0` (set
+    /// the public fields to fill them in).
+    #[must_use]
+    pub fn new(
+        params: Vec<f64>,
+        errors: Vec<f64>,
+        chi2: f64,
+        ndf: usize,
+        valid: bool,
+    ) -> FitResult {
+        FitResult {
+            params,
+            errors,
+            minos: None,
+            covariance: None,
+            chi2,
+            fval: chi2,
+            edm: f64::NAN,
+            nfcn: 0,
+            ndf,
+            valid,
+        }
+    }
+
     /// Reduced chi-square `chi2 / ndf`, or `NaN` when `ndf == 0` (an
     /// under-determined fit has no meaningful reduced chi-square).
     #[must_use]
@@ -199,10 +398,11 @@ impl FitResult {
     /// Goodness-of-fit p-value: the probability of a chi-square at least this
     /// large for `ndf` degrees of freedom (a good fit is near 1, a poor one near
     /// 0). For a likelihood fit this is the asymptotic value via the
-    /// likelihood-ratio (Wilks' theorem). `NaN` for an invalid fit.
+    /// likelihood-ratio (Wilks' theorem). `NaN` for an invalid fit, and under a
+    /// robust loss (no χ²).
     #[must_use]
     pub fn p_value(&self) -> f64 {
-        if !self.valid || self.ndf == 0 {
+        if !self.valid || self.ndf == 0 || !self.chi2.is_finite() {
             f64::NAN
         } else {
             oxistats::chi_square_prob(self.chi2, self.ndf)
