@@ -11,7 +11,7 @@ or raw `(x, y, σ)` points. The minimizer is the pure-Rust
 
 | Crate | What it is |
 | --- | --- |
-| [`oxifit`](crates/oxifit) | The fitter: `FitData`/`FitExt`, `Model`, χ² / Poisson-likelihood costs, robust losses, Minuit2 (MIGRAD + HESSE, MINOS), Levenberg–Marquardt, global searches (multistart, differential evolution, CMA-ES) and an optional Nelder–Mead `argmin` backend |
+| [`oxifit`](crates/oxifit) | The fitter: `FitData`/`FitExt`, `Model`, χ² / Poisson-likelihood / unbinned and extended likelihood costs, robust losses, Minuit2 (MIGRAD + HESSE, MINOS), Levenberg–Marquardt, global searches (multistart, differential evolution, CMA-ES) and an optional Nelder–Mead `argmin` backend |
 | [`oxifit-formula`](crates/oxifit-formula) | A ROOT `TFormula` expression engine (its only dependency is oxistats, for `erf`/`erfc`/`lgamma`): parse and evaluate formula strings, numerical integral and derivative. `Model::from_formula` and oxiroot's `Func1D`/`Func2D`/`Func3D` are built on it. |
 
 ```toml
@@ -59,6 +59,15 @@ The global searches look inside each free parameter's limits, so set a
 `FitOptions::strategy`, `tolerance` and `max_fcn` tune Minuit2, and
 `with_hesse(false)` skips HESSE when only the values matter.
 
+## Unbinned fits
+
+`Events::new(&values)` (or `Events::weighted(&values, &weights)`) holds
+individual events. `FitMethod::UnbinnedLikelihood` fits a model's *shape* to
+them, normalized numerically over the fit range; `ExtendedUnbinnedLikelihood`
+treats the model as the expected event density, so its integral (the yield) is
+fitted too. For weighted events, `FitOptions::with_sumw2(true)` corrects the
+covariance for the weights (RooFit's `SumW2Error`).
+
 ## Profiles and contours
 
 Beyond the parabolic errors (and MINOS), `data.profile(&model, &opts, "mean",
@@ -87,7 +96,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | --- | --- |
 | [`resonance_fit`](crates/oxifit/examples/resonance_fit.rs) | A Z → μμ peak on a falling background: a sideband fit seeds ROOT's `gaus(0)+expo(3)`, fitted with χ² and with a Poisson likelihood, with MINOS errors |
 | [`trigger_turn_on`](crates/oxifit/examples/trigger_turn_on.rs) | A trigger efficiency turn-on fitted with an error-function model (a custom `Model` closure), and the pT where it is fully efficient |
-| [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay-time distribution, and why a likelihood beats a χ² on sparse tails |
+| [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay times — binned χ², binned likelihood and unbinned likelihood — and why a likelihood beats a χ² on sparse tails |
 | [`peak_search`](crates/oxifit/examples/peak_search.rs) | A narrow peak at an unknown mass: MIGRAD from a blind seed misses it, multistart, differential evolution and CMA-ES find it |
 
 ## The oxihep family

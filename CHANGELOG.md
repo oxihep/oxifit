@@ -6,6 +6,24 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Unbinned likelihood fits.** `Events::new(&values)` /
+  `Events::weighted(&values, &weights)` hold individual events.
+  `FitMethod::UnbinnedLikelihood` minimizes `−2·Σ w·ln(f/∫f)`, the model
+  normalized numerically over the fit range (default: the events' span);
+  `FitMethod::ExtendedUnbinnedLikelihood` minimizes `−2·[Σ w·ln f − ∫f]`,
+  the model being the expected event density, so the yield is fitted too.
+  `chi2` is `NaN` for both (no goodness of fit). Least-squares backends
+  (Levenberg–Marquardt) fall back to MIGRAD for them.
+- **`FitOptions::with_sumw2`** corrects a weighted unbinned fit's covariance
+  for the weights, `V = H⁻¹·W·H⁻¹` (RooFit's `SumW2Error`); without it the
+  errors are those of `Σw` unit-weight events.
+- **`oxifit_formula::integrate_adaptive`**: globally adaptive Gauss–Kronrod
+  with a cap on the number of intervals, so its cost is bounded; it
+  normalizes the unbinned likelihoods.
+- The `lifetime_fit` example adds an unbinned fit of the decay times.
+
 ## [0.3.0]
 
 CMA-ES and Levenberg–Marquardt, sum models with Gaussian constraints, and

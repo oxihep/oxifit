@@ -39,7 +39,7 @@ mod model;
 mod result;
 mod scan;
 
-pub use data::{FitData, FitExt, Point, Points};
+pub use data::{Events, FitData, FitExt, Point, Points};
 pub use model::Model;
 /// The error [`Points::new`] and [`Points::unweighted`] return for inputs of
 /// different lengths (from `oxistats`).

@@ -29,6 +29,12 @@ use crate::data::Point;
 use crate::model::{Constraint, Model};
 use crate::result::{FitMethod, FitOptions, FitResult, Loss, Minimizer};
 
+/// The most intervals the unbinned normalization integral may use.
+const NORM_INTERVALS: usize = 200;
+
+/// A cost over the full parameter vector.
+pub(crate) type CostFn<'a> = &'a dyn Fn(&[f64]) -> f64;
+
 /// Everything a backend needs to minimize one fit.
 pub(crate) struct Fit<'a> {
     /// The model: parameter names, seeds, and constraints.
@@ -38,8 +44,12 @@ pub(crate) struct Fit<'a> {
     /// The residuals over the full parameter vector, written into a slice of
     /// [`n_residuals`](Self::n_residuals): their squares sum to the cost.
     pub(crate) residuals: &'a dyn Fn(&[f64], &mut [f64]),
-    /// How many residuals there are.
+    /// How many residuals there are (`0`: the cost is no sum of squares — the
+    /// unbinned likelihoods — and least-squares backends fall back to MIGRAD).
     pub(crate) n_residuals: usize,
+    /// For a SumW2-corrected fit of weighted events: the cost with squared
+    /// weights, whose Hessian is the sandwich's middle.
+    pub(crate) cost_w2: Option<CostFn<'a>>,
     /// Degrees of freedom: fitted points + constraints − free parameters.
     pub(crate) ndf: usize,
     /// The fit options (strategy, tolerance, HESSE, MINOS, …).
@@ -108,6 +118,7 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
             Minimizer::NelderMead => nelder_mead::minimize(fit),
         }))
         .unwrap_or_else(|_| failed(model))
+        .with_sumw2(fit)
     };
     match with_fit(all, model, opts, run) {
         Some((mut result, calls)) => {
@@ -170,6 +181,46 @@ pub(crate) fn with_fit<R>(
 
     let func = &model.func;
     let method = opts.method;
+    let unbinned = matches!(
+        method,
+        FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood
+    );
+    // The unbinned likelihoods normalize over the fit range: the given one,
+    // else the span of the events.
+    let (lo, hi) = opts.range.unwrap_or_else(|| {
+        points
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
+                (a.min(p.0), b.max(p.0))
+            })
+    });
+    let (sum_w, sum_w2) = points
+        .iter()
+        .fold((0.0, 0.0), |(a, b), p| (a + p.1, b + p.1 * p.1));
+    // `−2 ln L` with each event weighted by `w^power` (power 2 for the SumW2
+    // sandwich, whose extended term scales by Σw²/Σw as in RooFit).
+    let unbinned_cost = |p: &[f64], power: i32| -> f64 {
+        // Bounded, globally adaptive quadrature: a spike-like trial shape
+        // (a width driven toward zero) costs at most NORM_INTERVALS splits.
+        let norm =
+            oxifit_formula::integrate_adaptive(|x| func(x, p), lo, hi, 1e-10, NORM_INTERVALS).0;
+        let w = |y: f64| if power == 1 { y } else { y.powi(power) };
+        let logs: f64 = points
+            .iter()
+            .map(|&(x, y, _)| w(y) * func(x, p).max(1e-300).ln())
+            .sum();
+        if method == FitMethod::ExtendedUnbinnedLikelihood {
+            let scale = if power == 1 || sum_w == 0.0 {
+                1.0
+            } else {
+                sum_w2 / sum_w
+            };
+            -2.0 * (logs - scale * norm)
+        } else {
+            let wsum = if power == 1 { sum_w } else { sum_w2 };
+            -2.0 * (logs - wsum * norm.max(1e-300).ln())
+        }
+    };
     let loss = opts.loss;
     // Robust-loss residual scale squared; a non-positive `f_scale` means 1.
     let fs2 = {
@@ -205,6 +256,9 @@ pub(crate) fn with_fit<R>(
                     })
                     .sum::<f64>()
             }
+            FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => {
+                unbinned_cost(p, 1)
+            }
         }
     };
 
@@ -233,6 +287,8 @@ pub(crate) fn with_fit<R>(
                     let t = if y > 0.0 { f - y + y * (y / f).ln() } else { f };
                     (2.0 * t).max(0.0).sqrt().copysign(f - y)
                 }
+                // No residuals: `n_residuals` is 0 for these.
+                FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => 0.0,
             };
         }
         for (o, c) in out[points.len()..].iter_mut().zip(&penalties) {
@@ -251,20 +307,82 @@ pub(crate) fn with_fit<R>(
         calls.set(calls.get() + 1);
         residuals(p, out);
     };
+    let weighted = points.iter().any(|p| p.1 != 1.0);
+    let cost_w2 = |p: &[f64]| -> f64 {
+        unbinned_cost(p, 2) + penalties.iter().map(|c| pull(p, c).powi(2)).sum::<f64>()
+    };
     let fit = Fit {
         model,
         cost: &counted,
         residuals: &counted_residuals,
-        n_residuals: n_meas,
+        n_residuals: if unbinned { 0 } else { n_meas },
+        cost_w2: (unbinned && weighted && opts.sumw2).then_some(&cost_w2 as CostFn<'_>),
         ndf: n_meas - n_free,
         opts,
-        // A robust loss is ignored by the likelihood, so only it changes the
-        // meaning of the least-squares costs.
-        gof: matches!(opts.method, FitMethod::Likelihood) || opts.loss == Loss::Linear,
+        // The unbinned likelihoods have no goodness of fit; a robust loss is
+        // ignored by the binned likelihood, so only it changes the meaning of
+        // the least-squares costs.
+        gof: !unbinned
+            && (matches!(opts.method, FitMethod::Likelihood) || opts.loss == Loss::Linear),
     };
 
     let result = body(&fit);
     Some((result, calls.get()))
+}
+
+impl FitResult {
+    /// Replace the covariance of a weighted fit by the SumW2 sandwich
+    /// `V = H⁻¹·W·H⁻¹` (RooFit's `SumW2Error`), when the fit asks for it. With
+    /// the cost `F = −2 ln L`, HESSE's covariance is `C = 2·H_F⁻¹`, so
+    /// `V = C·W_F·C / 2`, `W_F` the Hessian of `F` with squared weights.
+    fn with_sumw2(mut self, fit: &Fit) -> FitResult {
+        let (Some(cost_w2), Some(cov)) = (fit.cost_w2, self.covariance.as_ref()) else {
+            return self;
+        };
+        if !self.valid {
+            return self;
+        }
+        let free = fit.free();
+        let sub: Vec<f64> = free.iter().map(|&i| self.params[i]).collect();
+        // Steps of a twentieth of each error: well inside the quadratic region.
+        let h: Vec<f64> = (0..free.len())
+            .map(|k| {
+                let e = cov[k][k].sqrt();
+                if e.is_finite() && e > 0.0 {
+                    0.05 * e
+                } else {
+                    1e-4 * sub[k].abs().max(1.0)
+                }
+            })
+            .collect();
+        let params = self.params.clone();
+        let f = |s: &[f64]| cost_w2(&global::scatter(&params, &free, s));
+        let w = linalg::hessian(&f, &sub, &h);
+        let n = free.len();
+        let cw: Vec<Vec<f64>> = (0..n)
+            .map(|a| {
+                (0..n)
+                    .map(|b| (0..n).map(|k| cov[a][k] * w[k][b]).sum())
+                    .collect()
+            })
+            .collect();
+        let v: Vec<Vec<f64>> = (0..n)
+            .map(|a| {
+                (0..n)
+                    .map(|b| 0.5 * (0..n).map(|k| cw[a][k] * cov[k][b]).sum::<f64>())
+                    .collect()
+            })
+            .collect();
+        for (k, &i) in free.iter().enumerate() {
+            self.errors[i] = if v[k][k] > 0.0 {
+                v[k][k].sqrt()
+            } else {
+                f64::NAN
+            };
+        }
+        self.covariance = Some(v);
+        self
+    }
 }
 
 /// An always-invalid result: no minimum was found (too few points, or the

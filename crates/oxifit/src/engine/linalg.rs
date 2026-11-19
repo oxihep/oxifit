@@ -90,6 +90,83 @@ pub(crate) fn sym_eigen(a: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
     ((0..n).map(|i| m[i][i]).collect(), v)
 }
 
+/// Invert a small square matrix by Gauss–Jordan elimination with partial
+/// pivoting; `None` if singular. Used only for the tiny (few-parameter)
+/// covariance, so an O(n³) dense solve is plenty.
+#[cfg(feature = "argmin")]
+pub(crate) fn invert(m: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
+    let n = m.len();
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    // Augment with the identity: [m | I].
+    let mut a: Vec<Vec<f64>> = m
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let mut r = row.clone();
+            r.extend((0..n).map(|j| if i == j { 1.0 } else { 0.0 }));
+            r
+        })
+        .collect();
+
+    for col in 0..n {
+        let pivot = (col..n)
+            .max_by(|&a_, &b_| a[a_][col].abs().total_cmp(&a[b_][col].abs()))
+            .unwrap();
+        if a[pivot][col].abs() < 1e-300 {
+            return None;
+        }
+        a.swap(col, pivot);
+        let d = a[col][col];
+        for x in a[col].iter_mut() {
+            *x /= d;
+        }
+        // The pivot row is unchanged while we eliminate the others, so clone it
+        // once and subtract by iterator (no double-indexing of `a`).
+        let pivot_row = a[col].clone();
+        for (row, a_row) in a.iter_mut().enumerate() {
+            if row != col {
+                let factor = a_row[col];
+                if factor != 0.0 {
+                    for (dst, &src) in a_row.iter_mut().zip(&pivot_row) {
+                        *dst -= factor * src;
+                    }
+                }
+            }
+        }
+    }
+    Some(a.into_iter().map(|row| row[n..].to_vec()).collect())
+}
+
+/// The Hessian of `f` at `x` by central differences with steps `h`.
+pub(crate) fn hessian(f: &impl Fn(&[f64]) -> f64, x: &[f64], h: &[f64]) -> Vec<Vec<f64>> {
+    let n = x.len();
+    let f0 = f(x);
+    let at = |di: (usize, f64), dj: Option<(usize, f64)>| {
+        let mut s = x.to_vec();
+        s[di.0] += di.1;
+        if let Some((j, d)) = dj {
+            s[j] += d;
+        }
+        f(&s)
+    };
+    let mut hess = vec![vec![0.0; n]; n];
+    for i in 0..n {
+        hess[i][i] = (at((i, h[i]), None) - 2.0 * f0 + at((i, -h[i]), None)) / (h[i] * h[i]);
+        for j in (i + 1)..n {
+            let v = (at((i, h[i]), Some((j, h[j])))
+                - at((i, h[i]), Some((j, -h[j])))
+                - at((i, -h[i]), Some((j, h[j])))
+                + at((i, -h[i]), Some((j, -h[j]))))
+                / (4.0 * h[i] * h[j]);
+            hess[i][j] = v;
+            hess[j][i] = v;
+        }
+    }
+    hess
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

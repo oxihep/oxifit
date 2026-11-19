@@ -19,6 +19,20 @@ pub enum FitMethod {
     /// below zero is clamped to a tiny positive value (heavily penalised, not
     /// rejected). Meaningful for binned counts (histograms), not arbitrary `y`.
     Likelihood,
+    /// Unbinned maximum likelihood on individual events ([`Events`](crate::Events)):
+    /// minimize `−2·Σ wᵢ·ln(f(xᵢ)/∫f)`, the model normalized numerically over
+    /// the fit [`range`](FitOptions::range) (default: the events' span). Only
+    /// the model's *shape* matters, so its overall scale is free: fix one
+    /// normalization parameter (or fit the yield too with
+    /// [`ExtendedUnbinnedLikelihood`](Self::ExtendedUnbinnedLikelihood)).
+    /// There is no goodness of fit: `chi2` is `NaN`.
+    UnbinnedLikelihood,
+    /// Extended unbinned maximum likelihood: minimize
+    /// `−2·[Σ wᵢ·ln f(xᵢ) − ∫f]`, the model `f` being the expected event
+    /// *density* (events per unit `x`) over the fit range, so `∫f` is the
+    /// expected number of events and is fitted too — a sum of yields times
+    /// normalized shapes (RooFit's extended `RooAddPdf`). `chi2` is `NaN`.
+    ExtendedUnbinnedLikelihood,
 }
 
 /// Which optimizer minimizes the cost.
@@ -286,6 +300,13 @@ pub struct FitOptions {
     pub hesse: bool,
     /// Which optimizer backend to use.
     pub minimizer: Minimizer,
+    /// Correct the covariance of a fit to *weighted* events for the weights
+    /// (RooFit's `SumW2Error`): `V = H⁻¹·W·H⁻¹`, `H` the Hessian of the
+    /// weighted likelihood and `W` that of the same likelihood with squared
+    /// weights. Without it a weighted fit's errors are those of `Σw` unit
+    /// events. Default `false`; applies to the unbinned likelihoods (MINOS
+    /// errors are not corrected).
+    pub sumw2: bool,
     /// Minuit2 strategy: `0` (fast, fewer derivative calls), `1` (default),
     /// `2` (careful: more accurate derivatives and covariance, slower) — ROOT's
     /// `SetStrategy`. Applies to MIGRAD, HESSE and MINOS.
@@ -297,8 +318,8 @@ pub struct FitOptions {
     /// Cap on the cost evaluations of one Minuit2 minimization; `None` (the
     /// default) is Minuit2's own `200 + 100·n + 5·n²` for `n` free parameters.
     pub max_fcn: Option<usize>,
-    /// Robust [`Loss`] applied to each squared residual (least-squares costs
-    /// only; ignored by [`Likelihood`](FitMethod::Likelihood)).
+    /// Robust [`Loss`] applied to each squared residual (the χ² costs only;
+    /// ignored by the likelihoods).
     pub loss: Loss,
     /// The residual scale `C` for a robust [`loss`](Self::loss): a point begins to
     /// be treated as an outlier once its residual exceeds ~`C`. Default `1.0`;
@@ -313,6 +334,7 @@ impl Default for FitOptions {
             range: None,
             minos: false,
             hesse: true,
+            sumw2: false,
             minimizer: Minimizer::default(),
             strategy: 1,
             tolerance: 0.1,
@@ -351,6 +373,13 @@ impl FitOptions {
     #[must_use]
     pub fn with_hesse(mut self, on: bool) -> FitOptions {
         self.hesse = on;
+        self
+    }
+    /// Correct a weighted fit's covariance for the weights (see the
+    /// [`sumw2`](Self::sumw2) field).
+    #[must_use]
+    pub fn with_sumw2(mut self, on: bool) -> FitOptions {
+        self.sumw2 = on;
         self
     }
     /// Choose the optimizer backend ([`Minimizer`]).
