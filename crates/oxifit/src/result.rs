@@ -54,13 +54,17 @@ pub enum FitMethod {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Minimizer {
-    /// The pure-Rust [Minuit2](https://crates.io/crates/minuit2) port (MIGRAD) —
-    /// ROOT's algorithm. Gives parabolic errors, the covariance matrix, and (on
-    /// request) asymmetric MINOS errors. The default, always available.
-    #[default]
+    /// The pure-Rust [Minuit2](https://crates.io/crates/minuit2) port's MIGRAD
+    /// alone — ROOT's `"Migrad"`. Gives parabolic errors, the covariance
+    /// matrix, and (on request) asymmetric MINOS errors.
     Minuit2,
     /// MIGRAD, falling back to SIMPLEX (and MIGRAD again from its result) when
-    /// MIGRAD fails — ROOT's `"Minimize"` algorithm. Slower only on failure.
+    /// MIGRAD fails — ROOT's `"Minimize"` algorithm, and **the default**: it
+    /// costs the same as [`Minuit2`](Self::Minuit2) on every fit MIGRAD
+    /// manages and rescues many it does not (a seed far from the minimum, a
+    /// large dataset). Each MIGRAD uses the model's analytic gradient when it
+    /// has one.
+    #[default]
     Minuit2Combined,
     /// Minuit2's SIMPLEX method alone: gradient-free and robust far from the
     /// minimum but slow to converge; HESSE supplies the errors.
@@ -285,7 +289,8 @@ pub enum Loss {
 
 /// Options controlling a fit ([`FitExt::fit_opts`](crate::FitExt::fit_opts)).
 /// Construct with [`new`](Self::new) and the chainable setters; the defaults are
-/// a full-range chi-square fit minimized with [`Minimizer::Minuit2`].
+/// a full-range chi-square fit minimized with [`Minimizer::Minuit2Combined`]
+/// (MIGRAD, with SIMPLEX as a fallback).
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct FitOptions {

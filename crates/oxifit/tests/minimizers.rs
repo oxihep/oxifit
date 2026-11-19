@@ -237,3 +237,42 @@ fn nelder_mead_holds_one_and_two_sided_limits_exactly() {
     let fit = data.fit_opts(&wide, &nm);
     assert!(fit.valid && (fit.params[1] - 2.0).abs() < 1e-5, "{fit:?}");
 }
+
+#[test]
+fn the_default_rescues_a_far_seed_that_migrad_alone_misses() {
+    use oxifit::Events;
+    // 50 000 Gaussian events; seeded far off, MIGRAD alone stalls (minuit2
+    // 0.5), the default (MIGRAD with a SIMPLEX fallback) converges.
+    let xs: Vec<f64> = (1..=50_000)
+        .map(|i| {
+            let u1 = (f64::from(i) * 0.618_033_988_75).fract().max(1e-12);
+            let u2 = (f64::from(i) * 0.754_877_666_25).fract();
+            2.5 + 0.7 * (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+        })
+        .collect();
+    let events = Events::new(&xs);
+    let shape = Model::new("g", &["mu", "s"], vec![2.0, 1.5], |x, p| {
+        (-0.5 * ((x - p[0]) / p[1]).powi(2)).exp()
+    })
+    .lower_limit("s", 0.01);
+    let opts = FitOptions::new()
+        .method(FitMethod::UnbinnedLikelihood)
+        .range(0.0, 5.0);
+    assert_eq!(FitOptions::new().minimizer, Minimizer::Minuit2Combined);
+    let migrad = events.fit_opts(&shape, &opts.minimizer(Minimizer::Minuit2));
+    let default = events.fit_opts(&shape, &opts);
+    assert!(
+        !migrad.valid,
+        "MIGRAD alone was expected to stall: {migrad:?}"
+    );
+    assert!(
+        default.valid && (default.params[0] - 2.5).abs() < 0.01,
+        "{default:?}"
+    );
+
+    // Where MIGRAD succeeds, the default is MIGRAD: the same result, the same cost.
+    let (data, model) = line();
+    let a = data.fit_opts(&model, &FitOptions::new().minimizer(Minimizer::Minuit2));
+    let b = data.fit(&model);
+    assert_eq!(a, b);
+}

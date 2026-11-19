@@ -6,6 +6,20 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### Changed
+
+- **The default minimizer is `Minuit2Combined`**: MIGRAD, falling back to
+  SIMPLEX and MIGRAD again when MIGRAD fails (ROOT's `"Minimize"`). Where
+  MIGRAD succeeds nothing changes — the same result at the same cost —
+  but minuit2 0.5's MIGRAD stalls from some seeds far from the minimum (an
+  unbinned fit of 50 000 events seeded off by a width: MIGRAD invalid, the
+  default converges). `Minimizer::Minuit2` keeps MIGRAD alone, ROOT's
+  default. The combined minimizer is now oxifit's own rather than minuit2's
+  `MnMinimize`, so each MIGRAD in it uses the model's analytic gradient.
+  Profile and contour refits use it too.
+
 ## [0.5.0]
 
 Analytic gradients and L-BFGS-B, 2-D and 3-D fits, convolution, a
