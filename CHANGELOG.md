@@ -6,6 +6,11 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.4.0]
+
+Unbinned and extended likelihood fits with the SumW2 correction, toy
+studies, and simultaneous fits.
+
 ### Added
 
 - **Simultaneous fits** (RooFit's `RooSimultaneous`).
