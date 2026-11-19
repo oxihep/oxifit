@@ -422,7 +422,8 @@ pub struct FitResult {
     /// Cost evaluations the fit took in all: the minimization (a global
     /// search's included), HESSE and MINOS.
     pub nfcn: usize,
-    /// Degrees of freedom: fitted points − free parameters.
+    /// Degrees of freedom: fitted points + Gaussian constraints
+    /// ([`Model::constrain`](crate::Model::constrain)) − free parameters.
     pub ndf: usize,
     /// Whether the minimizer reported a valid minimum.
     pub valid: bool,

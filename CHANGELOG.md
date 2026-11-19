@@ -8,6 +8,16 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Sum models.** `Model::sum("m", &[&sig, &bkg])`, or `sig + bkg`, adds
+  models term by term. Parameters are named after their part (`sig.mean`,
+  `bkg.slope`; a repeated part name is numbered, `g_2.mean`), and each part
+  keeps its seeds, limits, fixed parameters and constraints. `a + b + c`
+  appends to the sum rather than nesting it.
+- **Gaussian constraints.** `.constrain("name", mean, sigma)` adds
+  `((p − mean)/sigma)²` to the cost — an external measurement, or a nuisance
+  parameter's prior — and counts as one more measurement in `ndf`. It works
+  with every cost and minimizer (Levenberg–Marquardt sees it as a residual).
+
 - **`Minimizer::CmaEs(CmaEs::new())`** — CMA-ES, the covariance matrix
   adaptation evolution strategy, over the parameter limits, then MIGRAD +
   HESSE. It learns the shape of the cost's valley, so it copes with
