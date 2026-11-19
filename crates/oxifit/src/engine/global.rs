@@ -7,41 +7,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use minuit2::FunctionMinimum;
 
+pub(crate) use crate::rng::Rng;
+
 use super::Fit;
 use super::minuit::{Local, finish, local};
 use crate::result::{DifferentialEvolution, FitResult, MultiStart};
-
-/// A small deterministic generator (SplitMix64): global searches must be
-/// reproducible from their seed, and need nothing stronger.
-pub(super) struct Rng(pub(super) u64);
-
-impl Rng {
-    pub(super) fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    /// Uniform in `[0, 1)`.
-    pub(super) fn uniform(&mut self) -> f64 {
-        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
-    }
-
-    /// Uniform in `0..n` (`n > 0`).
-    pub(super) fn below(&mut self, n: usize) -> usize {
-        // n is a population or dimension count: the modulo bias is negligible.
-        (self.next_u64() % n as u64) as usize
-    }
-
-    /// A standard normal draw (Box–Muller).
-    pub(super) fn gauss(&mut self) -> f64 {
-        let u1 = 1.0 - self.uniform(); // in (0, 1]: ln is finite
-        let u2 = self.uniform();
-        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
-    }
-}
 
 /// The search box `[lo, hi]` of each free parameter: its limits when it has
 /// both; otherwise the open side reaches 10 initial steps beyond the seed.
