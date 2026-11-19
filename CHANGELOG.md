@@ -8,6 +8,16 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Simultaneous fits** (RooFit's `RooSimultaneous`).
+  `Simultaneous::new().channel(name, &data, &model, &opts)…` fits several
+  datasets together, each with its own model and cost settings (any method,
+  binned or unbinned, range, robust loss); parameters with the same name are
+  shared, their seed and settings taken from the first channel that has
+  them. `.fit(&opts)` returns a `FitResult` over `param_names()` — the
+  summed cost, `chi2` when every channel has one, `ndf` over all channels —
+  and `channel_costs` splits the cost by channel. Every minimizer works
+  (Levenberg–Marquardt on the joint residuals when no channel is unbinned).
+
 - **Toy studies** (RooFit's `RooMCStudy`). `Toys::binned(&truth, &xs)`
   draws Poisson counts at fixed points; `Toys::unbinned(&truth, range, n)`
   draws `n` events from the model's shape (`.extended()`: a Poisson number of

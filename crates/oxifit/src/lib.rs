@@ -39,6 +39,7 @@ mod model;
 mod result;
 mod rng;
 mod scan;
+mod simultaneous;
 mod toys;
 
 pub use data::{Events, FitData, FitExt, Point, Points};
@@ -50,4 +51,5 @@ pub use result::{
     CmaEs, DifferentialEvolution, FitMethod, FitOptions, FitResult, Loss, Minimizer, MultiStart,
 };
 pub use scan::{Contour, FitError, Profile};
+pub use simultaneous::Simultaneous;
 pub use toys::{PullSummary, ToyStudy, Toys};

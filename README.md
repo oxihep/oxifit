@@ -68,6 +68,15 @@ treats the model as the expected event density, so its integral (the yield) is
 fitted too. For weighted events, `FitOptions::with_sumw2(true)` corrects the
 covariance for the weights (RooFit's `SumW2Error`).
 
+## Simultaneous fits
+
+`Simultaneous::new().channel("A", &data_a, &model_a, &opts_a).channel("B", …)`
+fits several datasets together, each with its own model and cost (binned or
+unbinned); parameters with the same name are shared — a signal strength across
+categories, a mass seen in two decay modes. `.fit(&opts)` returns one
+`FitResult` over `param_names()`, and `channel_costs` splits the cost by
+channel (RooFit's `RooSimultaneous`).
+
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,

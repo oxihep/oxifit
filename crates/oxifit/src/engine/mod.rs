@@ -99,28 +99,21 @@ impl Fit<'_> {
 /// `x` in `opts.range` (default: all); Neyman chi-square additionally drops
 /// points with no usable error (`sigma <= 0`).
 pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitResult {
-    let run = |fit: &Fit| {
-        // A backend may panic on a pathological point (minuit2 0.5's numerical
-        // gradient can, from a poor seed). Report that as a failed fit rather
-        // than unwinding into the caller. Nothing is shared across the
-        // boundary but the read-only model and data, so a caught panic leaves
-        // no broken state behind. The default panic hook still prints the
-        // message to stderr.
-        catch_unwind(AssertUnwindSafe(|| match opts.minimizer {
-            Minimizer::Minuit2 => minuit::run(fit, minuit::Local::Migrad),
-            Minimizer::Minuit2Combined => minuit::run(fit, minuit::Local::Combined),
-            Minimizer::Simplex => minuit::run(fit, minuit::Local::Simplex),
-            Minimizer::MultiStart(cfg) => global::multi_start(fit, cfg),
-            Minimizer::DifferentialEvolution(cfg) => global::differential_evolution(fit, cfg),
-            Minimizer::CmaEs(cfg) => cmaes::cma_es(fit, cfg),
-            Minimizer::LevenbergMarquardt => lm::levenberg_marquardt(fit),
-            #[cfg(feature = "argmin")]
-            Minimizer::NelderMead => nelder_mead::minimize(fit),
-        }))
-        .unwrap_or_else(|_| failed(model))
-        .with_sumw2(fit)
-    };
-    match with_fit(all, model, opts, run) {
+    finish_run(model, with_fit(all, model, opts, |fit| dispatch(fit, opts)))
+}
+
+/// Fit `model` to a prepared data term (a simultaneous fit's combined cost).
+pub(crate) fn run_terms(model: &Model, opts: &FitOptions, term: &DataTerm) -> FitResult {
+    finish_run(
+        model,
+        with_terms(model, opts, term, |fit| dispatch(fit, opts)),
+    )
+}
+
+/// The result with its evaluation count, or a failure when there were too few
+/// measurements to fit.
+fn finish_run(model: &Model, run: Option<(FitResult, usize)>) -> FitResult {
+    match run {
         Some((mut result, calls)) => {
             result.nfcn = calls;
             result
@@ -129,118 +122,144 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
     }
 }
 
-/// Build the [`Fit`] for `model` on `all` under `opts` — the selected points,
-/// the cost and residuals (with any Gaussian constraints), `ndf` — and run
-/// `body` on it. Returns `body`'s result and the number of cost evaluations it
-/// made, or `None` when there are too few measurements to determine the free
-/// parameters.
-pub(crate) fn with_fit<R>(
-    all: &[Point],
-    model: &Model,
-    opts: &FitOptions,
-    body: impl FnOnce(&Fit) -> R,
-) -> Option<(R, usize)> {
-    let np = model.params.len();
-    // Neyman chi-square uses only points with an error; the others use every one.
-    let drop_empty = matches!(opts.method, FitMethod::Chi2);
-    let points: Vec<(f64, f64, f64)> = all
-        .iter()
-        .filter_map(|p| {
-            if let Some((lo, hi)) = opts.range
-                && (p.x < lo || p.x > hi)
-            {
-                return None;
-            }
-            (!drop_empty || p.sigma > 0.0).then_some((p.x, p.y, p.sigma))
-        })
-        .collect();
+/// Minimize with the chosen backend, then apply any SumW2 correction.
+fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
+    // A backend may panic on a pathological point (minuit2 0.5's numerical
+    // gradient can, from a poor seed). Report that as a failed fit rather than
+    // unwinding into the caller. Nothing is shared across the boundary but the
+    // read-only model and data, so a caught panic leaves no broken state
+    // behind. The default panic hook still prints the message to stderr.
+    catch_unwind(AssertUnwindSafe(|| match opts.minimizer {
+        Minimizer::Minuit2 => minuit::run(fit, minuit::Local::Migrad),
+        Minimizer::Minuit2Combined => minuit::run(fit, minuit::Local::Combined),
+        Minimizer::Simplex => minuit::run(fit, minuit::Local::Simplex),
+        Minimizer::MultiStart(cfg) => global::multi_start(fit, cfg),
+        Minimizer::DifferentialEvolution(cfg) => global::differential_evolution(fit, cfg),
+        Minimizer::CmaEs(cfg) => cmaes::cma_es(fit, cfg),
+        Minimizer::LevenbergMarquardt => lm::levenberg_marquardt(fit),
+        #[cfg(feature = "argmin")]
+        Minimizer::NelderMead => nelder_mead::minimize(fit),
+    }))
+    .unwrap_or_else(|_| failed(fit.model))
+    .with_sumw2(fit)
+}
 
-    // Free (non-fixed) parameters determine the degrees of freedom.
-    let n_free = (0..np)
-        .filter(|&i| !model.constraints.get(i).map(|c| c.fixed).unwrap_or(false))
-        .count();
+/// One dataset's cost under its options: the selected points, the method,
+/// and (for the unbinned likelihoods) the normalization range and weight sums.
+/// Its costs are over the parameters of the model whose `func` it holds.
+pub(crate) struct Prepared<'m> {
+    func: &'m (dyn Fn(f64, &[f64]) -> f64 + Send + Sync),
+    points: Vec<(f64, f64, f64)>,
+    method: FitMethod,
+    loss: Loss,
+    /// Robust-loss residual scale squared.
+    fs2: f64,
+    /// The unbinned normalization range.
+    range: (f64, f64),
+    sum_w: f64,
+    sum_w2: f64,
+}
 
-    // Gaussian constraints on free parameters: `(index, mean, sigma)`. Each is
-    // an auxiliary measurement — a term in the cost, a residual, and a point
-    // in `ndf`.
-    let penalties: Vec<(usize, f64, f64)> = model
-        .constraints
-        .iter()
-        .take(np)
-        .enumerate()
-        .filter(|(_, c)| !c.fixed)
-        .filter_map(|(i, c)| c.gauss.map(|(m, s)| (i, m, s)))
-        .collect();
-    let n_meas = points.len() + penalties.len();
-
-    // Too few measurements to determine the free parameters: report failure
-    // rather than a meaningless minimum of a flat cost.
-    if np == 0 || n_meas < n_free.max(1) {
-        return None;
-    }
-
-    let func = &model.func;
-    let method = opts.method;
-    let unbinned = matches!(
-        method,
-        FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood
-    );
-    // The unbinned likelihoods normalize over the fit range: the given one,
-    // else the span of the events.
-    let (lo, hi) = opts.range.unwrap_or_else(|| {
-        points
+impl<'m> Prepared<'m> {
+    /// Select the points of `all` that enter a fit under `opts`: those with `x`
+    /// in `opts.range` (default: all), and for Neyman χ² only those with an
+    /// error.
+    pub(crate) fn new(
+        all: &[Point],
+        func: &'m (dyn Fn(f64, &[f64]) -> f64 + Send + Sync),
+        opts: &FitOptions,
+    ) -> Prepared<'m> {
+        let drop_empty = matches!(opts.method, FitMethod::Chi2);
+        let points: Vec<(f64, f64, f64)> = all
             .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
-                (a.min(p.0), b.max(p.0))
+            .filter_map(|p| {
+                if let Some((lo, hi)) = opts.range
+                    && (p.x < lo || p.x > hi)
+                {
+                    return None;
+                }
+                (!drop_empty || p.sigma > 0.0).then_some((p.x, p.y, p.sigma))
             })
-    });
-    let (sum_w, sum_w2) = points
-        .iter()
-        .fold((0.0, 0.0), |(a, b), p| (a + p.1, b + p.1 * p.1));
-    // `−2 ln L` with each event weighted by `w^power` (power 2 for the SumW2
-    // sandwich, whose extended term scales by Σw²/Σw as in RooFit).
-    let unbinned_cost = |p: &[f64], power: i32| -> f64 {
-        // Bounded, globally adaptive quadrature: a spike-like trial shape
-        // (a width driven toward zero) costs at most NORM_INTERVALS splits.
-        let norm =
-            oxifit_formula::integrate_adaptive(|x| func(x, p), lo, hi, 1e-10, NORM_INTERVALS).0;
-        let w = |y: f64| if power == 1 { y } else { y.powi(power) };
-        let logs: f64 = points
+            .collect();
+        // The unbinned likelihoods normalize over the fit range: the given
+        // one, else the span of the events.
+        let range = opts.range.unwrap_or_else(|| {
+            points
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
+                    (a.min(p.0), b.max(p.0))
+                })
+        });
+        let (sum_w, sum_w2) = points
             .iter()
-            .map(|&(x, y, _)| w(y) * func(x, p).max(1e-300).ln())
-            .sum();
-        if method == FitMethod::ExtendedUnbinnedLikelihood {
-            let scale = if power == 1 || sum_w == 0.0 {
-                1.0
-            } else {
-                sum_w2 / sum_w
-            };
-            -2.0 * (logs - scale * norm)
-        } else {
-            let wsum = if power == 1 { sum_w } else { sum_w2 };
-            -2.0 * (logs - wsum * norm.max(1e-300).ln())
-        }
-    };
-    let loss = opts.loss;
-    // Robust-loss residual scale squared; a non-positive `f_scale` means 1.
-    let fs2 = {
+            .fold((0.0, 0.0), |(a, b), p| (a + p.1, b + p.1 * p.1));
         let fs = if opts.f_scale > 0.0 {
             opts.f_scale
         } else {
             1.0
         };
-        fs * fs
-    };
-    let data_cost = |p: &[f64]| -> f64 {
-        match method {
-            FitMethod::Chi2 => points
+        Prepared {
+            func,
+            points,
+            method: opts.method,
+            loss: opts.loss,
+            fs2: fs * fs,
+            range,
+            sum_w,
+            sum_w2,
+        }
+    }
+
+    /// The number of points (events) entering the fit.
+    pub(crate) fn n_points(&self) -> usize {
+        self.points.len()
+    }
+
+    /// Whether the cost is an unbinned likelihood.
+    pub(crate) fn unbinned(&self) -> bool {
+        matches!(
+            self.method,
+            FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood
+        )
+    }
+
+    /// Whether any event carries a weight other than 1.
+    pub(crate) fn weighted(&self) -> bool {
+        self.points.iter().any(|p| p.1 != 1.0)
+    }
+
+    /// Whether the cost at the minimum is a goodness-of-fit statistic: not for
+    /// the unbinned likelihoods, nor a χ² under a robust loss (which the
+    /// binned likelihood ignores).
+    pub(crate) fn gof(&self) -> bool {
+        !self.unbinned() && (self.method == FitMethod::Likelihood || self.loss == Loss::Linear)
+    }
+
+    /// How many residuals [`residuals`](Self::residuals) writes: one per
+    /// point, or none for the unbinned likelihoods (no sum of squares).
+    pub(crate) fn n_residuals(&self) -> usize {
+        if self.unbinned() {
+            0
+        } else {
+            self.points.len()
+        }
+    }
+
+    /// The cost at parameters `p`.
+    pub(crate) fn cost(&self, p: &[f64]) -> f64 {
+        let func = self.func;
+        let (loss, fs2) = (self.loss, self.fs2);
+        match self.method {
+            FitMethod::Chi2 => self
+                .points
                 .iter()
                 .map(|&(x, y, e)| {
                     let d = (y - func(x, p)) / e;
                     robust(d * d, loss, fs2)
                 })
                 .sum(),
-            FitMethod::PearsonChi2 => points
+            FitMethod::PearsonChi2 => self
+                .points
                 .iter()
                 .map(|&(x, y, _)| {
                     let f = func(x, p).max(1e-300); // expected (model) variance
@@ -248,7 +267,8 @@ pub(crate) fn with_fit<R>(
                 })
                 .sum(),
             FitMethod::Likelihood => {
-                2.0 * points
+                2.0 * self
+                    .points
                     .iter()
                     .map(|&(x, y, _)| {
                         let f = func(x, p).max(1e-300);
@@ -257,22 +277,57 @@ pub(crate) fn with_fit<R>(
                     .sum::<f64>()
             }
             FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => {
-                unbinned_cost(p, 1)
+                self.unbinned_cost(p, 1)
             }
         }
-    };
+    }
 
-    let pull = |p: &[f64], &(i, m, sd): &(usize, f64, f64)| (p[i] - m) / sd;
-    let cost = |p: &[f64]| -> f64 {
-        data_cost(p) + penalties.iter().map(|c| pull(p, c).powi(2)).sum::<f64>()
-    };
+    /// For the SumW2 sandwich: the unbinned cost with squared weights (whose
+    /// extended term scales by Σw²/Σw, as in RooFit); otherwise the cost.
+    pub(crate) fn cost_w2(&self, p: &[f64]) -> f64 {
+        if self.unbinned() {
+            self.unbinned_cost(p, 2)
+        } else {
+            self.cost(p)
+        }
+    }
 
-    // The same cost as residuals whose squares sum to it, for least-squares
-    // backends: (y − f)/σ for χ², with a robust loss as √ρ, and the signed
-    // deviance residual √(2·[f − y + y·ln(y/f)]) for the likelihood.
-    let residuals = |p: &[f64], out: &mut [f64]| {
-        for (o, &(x, y, e)) in out.iter_mut().zip(&points) {
-            *o = match method {
+    /// `−2 ln L` with each event weighted by `w^power`.
+    fn unbinned_cost(&self, p: &[f64], power: i32) -> f64 {
+        let func = self.func;
+        let (lo, hi) = self.range;
+        // Bounded, globally adaptive quadrature: a spike-like trial shape (a
+        // width driven toward zero) costs at most NORM_INTERVALS splits.
+        let norm =
+            oxifit_formula::integrate_adaptive(|x| func(x, p), lo, hi, 1e-10, NORM_INTERVALS).0;
+        let w = |y: f64| if power == 1 { y } else { y.powi(power) };
+        let logs: f64 = self
+            .points
+            .iter()
+            .map(|&(x, y, _)| w(y) * func(x, p).max(1e-300).ln())
+            .sum();
+        if self.method == FitMethod::ExtendedUnbinnedLikelihood {
+            let scale = if power == 1 || self.sum_w == 0.0 {
+                1.0
+            } else {
+                self.sum_w2 / self.sum_w
+            };
+            -2.0 * (logs - scale * norm)
+        } else {
+            let wsum = if power == 1 { self.sum_w } else { self.sum_w2 };
+            -2.0 * (logs - wsum * norm.max(1e-300).ln())
+        }
+    }
+
+    /// The residuals at `p`, whose squares sum to the cost: (y − f)/σ for χ²
+    /// (a robust loss as √ρ), (y − f)/√f for Pearson, and the signed deviance
+    /// residual √(2·[f − y + y·ln(y/f)]) for the binned likelihood. `out`
+    /// holds [`n_residuals`](Self::n_residuals) values.
+    pub(crate) fn residuals(&self, p: &[f64], out: &mut [f64]) {
+        let func = self.func;
+        let (loss, fs2) = (self.loss, self.fs2);
+        for (o, &(x, y, e)) in out.iter_mut().zip(&self.points) {
+            *o = match self.method {
                 FitMethod::Chi2 => {
                     let d = (y - func(x, p)) / e;
                     robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
@@ -291,39 +346,120 @@ pub(crate) fn with_fit<R>(
                 FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => 0.0,
             };
         }
-        for (o, c) in out[points.len()..].iter_mut().zip(&penalties) {
-            *o = pull(p, c);
-        }
+    }
+}
+
+/// The data part of a fit's cost, over the full parameter vector of the
+/// fit's model: one [`Prepared`] dataset, or a simultaneous fit's sum of them.
+pub(crate) struct DataTerm<'a> {
+    /// The data cost.
+    pub(crate) cost: CostFn<'a>,
+    /// The data residuals (`n_residuals` of them).
+    pub(crate) residuals: &'a dyn Fn(&[f64], &mut [f64]),
+    /// How many residuals (0: not a sum of squares).
+    pub(crate) n_residuals: usize,
+    /// Data points entering `ndf`.
+    pub(crate) n_points: usize,
+    /// Whether the cost is a goodness-of-fit statistic.
+    pub(crate) gof: bool,
+    /// The cost with squared weights, when a SumW2 correction applies.
+    pub(crate) cost_w2: Option<CostFn<'a>>,
+}
+
+/// Build the [`Fit`] for `model` on `all` under `opts` — the selected points,
+/// the cost and residuals (with any Gaussian constraints), `ndf` — and run
+/// `body` on it. Returns `body`'s result and the number of cost evaluations it
+/// made, or `None` when there are too few measurements to determine the free
+/// parameters.
+pub(crate) fn with_fit<R>(
+    all: &[Point],
+    model: &Model,
+    opts: &FitOptions,
+    body: impl FnOnce(&Fit) -> R,
+) -> Option<(R, usize)> {
+    let prep = Prepared::new(all, &*model.func, opts);
+    let cost = |p: &[f64]| prep.cost(p);
+    let residuals = |p: &[f64], out: &mut [f64]| prep.residuals(p, out);
+    let cost_w2 = |p: &[f64]| prep.cost_w2(p);
+    let term = DataTerm {
+        cost: &cost,
+        residuals: &residuals,
+        n_residuals: prep.n_residuals(),
+        n_points: prep.n_points(),
+        gof: prep.gof(),
+        cost_w2: (prep.unbinned() && prep.weighted() && opts.sumw2)
+            .then_some(&cost_w2 as CostFn<'_>),
     };
+    with_terms(model, opts, &term, body)
+}
+
+/// Build the [`Fit`] for `model` from a data term — adding the model's
+/// Gaussian constraints and counting cost evaluations — and run `body` on it.
+/// `None` when there are too few measurements for the free parameters.
+pub(crate) fn with_terms<R>(
+    model: &Model,
+    opts: &FitOptions,
+    term: &DataTerm,
+    body: impl FnOnce(&Fit) -> R,
+) -> Option<(R, usize)> {
+    let np = model.params.len();
+    // Free (non-fixed) parameters determine the degrees of freedom.
+    let n_free = (0..np)
+        .filter(|&i| !model.constraints.get(i).map(|c| c.fixed).unwrap_or(false))
+        .count();
+
+    // Gaussian constraints on free parameters: `(index, mean, sigma)`. Each is
+    // an auxiliary measurement — a term in the cost, a residual, and a point
+    // in `ndf`.
+    let penalties: Vec<(usize, f64, f64)> = model
+        .constraints
+        .iter()
+        .take(np)
+        .enumerate()
+        .filter(|(_, c)| !c.fixed)
+        .filter_map(|(i, c)| c.gauss.map(|(m, s)| (i, m, s)))
+        .collect();
+    let n_meas = term.n_points + penalties.len();
+
+    // Too few measurements to determine the free parameters: report failure
+    // rather than a meaningless minimum of a flat cost.
+    if np == 0 || n_meas < n_free.max(1) {
+        return None;
+    }
+
+    let pull = |p: &[f64], &(i, m, sd): &(usize, f64, f64)| (p[i] - m) / sd;
+    let penalty = |p: &[f64]| penalties.iter().map(|c| pull(p, c).powi(2)).sum::<f64>();
+    let n_data_res = term.n_residuals;
 
     // Count every cost evaluation, whichever backend makes it (a residual
     // vector counts as one).
     let calls = Cell::new(0_usize);
-    let counted = |p: &[f64]| {
+    let cost = |p: &[f64]| {
         calls.set(calls.get() + 1);
-        cost(p)
+        (term.cost)(p) + penalty(p)
     };
-    let counted_residuals = |p: &[f64], out: &mut [f64]| {
+    let residuals = |p: &[f64], out: &mut [f64]| {
         calls.set(calls.get() + 1);
-        residuals(p, out);
+        (term.residuals)(p, &mut out[..n_data_res]);
+        for (o, c) in out[n_data_res..].iter_mut().zip(&penalties) {
+            *o = pull(p, c);
+        }
     };
-    let weighted = points.iter().any(|p| p.1 != 1.0);
-    let cost_w2 = |p: &[f64]| -> f64 {
-        unbinned_cost(p, 2) + penalties.iter().map(|c| pull(p, c).powi(2)).sum::<f64>()
-    };
+    let cost_w2_fn = |p: &[f64]| term.cost_w2.map_or(f64::NAN, |c| c(p)) + penalty(p);
     let fit = Fit {
         model,
-        cost: &counted,
-        residuals: &counted_residuals,
-        n_residuals: if unbinned { 0 } else { n_meas },
-        cost_w2: (unbinned && weighted && opts.sumw2).then_some(&cost_w2 as CostFn<'_>),
+        cost: &cost,
+        residuals: &residuals,
+        // Least-squares backends need every term as residuals.
+        n_residuals: if n_data_res == 0 && term.n_points > 0 {
+            0
+        } else {
+            n_data_res + penalties.len()
+        },
+        cost_w2: term.cost_w2.is_some().then_some(&cost_w2_fn as CostFn<'_>),
         ndf: n_meas - n_free,
         opts,
-        // The unbinned likelihoods have no goodness of fit; a robust loss is
-        // ignored by the binned likelihood, so only it changes the meaning of
-        // the least-squares costs.
-        gof: !unbinned
-            && (matches!(opts.method, FitMethod::Likelihood) || opts.loss == Loss::Linear),
+        gof: term.gof,
     };
 
     let result = body(&fit);
