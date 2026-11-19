@@ -6,6 +6,11 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.5.0]
+
+Analytic gradients and L-BFGS-B, 2-D and 3-D fits, convolution, a
+`rayon` feature, and stricter models.
+
 ### Breaking
 
 - `FitExt` is now implemented for `FitDataNd` (every 1-D `FitData` gets
