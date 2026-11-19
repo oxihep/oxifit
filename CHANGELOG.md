@@ -8,6 +8,17 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Bayesian sampling**: `Sampler`, the affine-invariant ensemble sampler of
+  emcee (Goodman–Weare stretch moves) on any `Fitter`'s posterior — limits
+  as flat priors, Gaussian constraints as Gaussian priors, fixed parameters
+  held — parallel with `rayon` and reproducible from a seed. `Chain` gives
+  means, standard deviations, quantiles, central credible intervals, the
+  covariance and autocorrelation times. `tests/mcmc.rs` checks it against a
+  correlated Gaussian, a banana (quantiles from a grid integration) and a
+  Poisson signal's exact posterior.
+- **`bayesian_fit` example**: posterior intervals against MINOS, and a
+  credible upper limit against CLs.
+
 - **Analytic integrals for the built-in shapes** (normal, Gaussian,
   exponential, polynomial, Crystal Ball, double-sided Crystal Ball,
   Breit–Wigner), and `Model::with_integral` / `Model::integral` for any
@@ -104,6 +115,11 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Fixed
 
+- **MINOS errors were wrong for models with an analytic gradient.** Their
+  covariance comes from the gradient, so Minuit's HESSE never ran and MINOS
+  started from MIGRAD's running error estimate — for a parameter MIGRAD
+  hardly moved, a ±0.0002 interval for an amplitude known to ±4.5. MINOS now
+  starts from a HESSE run on the minimum. (Since 0.5.0.)
 - **A free parameter seeded exactly on one of its limits never moved.**
   Minuit's limit transform is flat at a limit, so MIGRAD saw no gradient: a
   signal strength seeded at its lower limit 0 stayed 0. The seed is now moved

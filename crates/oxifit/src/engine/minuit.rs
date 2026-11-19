@@ -191,7 +191,7 @@ pub(crate) fn finish(fit: &Fit, mut min: FunctionMinimum) -> FitResult {
             .collect()
     });
     let mut valid = min.is_valid();
-    if let Some(hessian) = from_gradient {
+    if let Some(hessian) = from_gradient.clone() {
         match hessian {
             Some(cov) => {
                 for (k, i) in fit.free().into_iter().enumerate() {
@@ -207,7 +207,19 @@ pub(crate) fn finish(fit: &Fit, mut min: FunctionMinimum) -> FitResult {
     // minimum. A fixed parameter is pinned, so its error is (0, 0); a free one
     // gets a likelihood scan (`lower_error` is ≤ 0, `upper_error` is ≥ 0).
     let minos = (opts.minos && min.is_valid()).then(|| {
-        let scan = MnMinos::new(cost, &min).with_strategy(opts.strategy);
+        // MINOS starts its scans from the minimum's error matrix. On the
+        // gradient path that is still MIGRAD's running estimate (the
+        // covariance above came from the gradient, not from HESSE), which can
+        // be far off for a parameter MIGRAD hardly moved — MINOS then returns
+        // a bogus interval. Run HESSE on the minimum first.
+        let start = if from_gradient.is_some() {
+            MnHesse::new()
+                .with_strategy(opts.strategy)
+                .calculate(cost, &min)
+        } else {
+            min.clone()
+        };
+        let scan = MnMinos::new(cost, &start).with_strategy(opts.strategy);
         (0..params.len())
             .map(|par| {
                 if fit.constraint(par).fixed {

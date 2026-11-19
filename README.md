@@ -207,6 +207,17 @@ binomial errors fails: efficiencies near 0 or 1 and bins with few trials.
 `BinomialCost` is the same as a `Cost`, with Asimov data and toys. Both match
 ROOT 6.40 (`tests/bins_efficiency.rs`).
 
+## Bayesian sampling
+
+`Sampler::new(fitter).run(burn_in, steps)` draws from a `Fitter`'s posterior
+— its cost as `−2 ln L`, limits as flat priors, Gaussian constraints as
+Gaussian priors — with the affine-invariant ensemble sampler of emcee
+(Goodman–Weare stretch moves: no tuning, robust to correlations; walkers in
+parallel with `rayon`, reproducible from a seed). The `Chain` gives means,
+quantiles, central credible intervals, the covariance and each parameter's
+autocorrelation time. Checked against exact posteriors (a correlated
+Gaussian, a banana, a Poisson signal) in `tests/mcmc.rs`.
+
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,
@@ -250,6 +261,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`template_fit`](crates/oxifit/examples/template_fit.rs) | A HistFactory-style search: signal, top and W+jets templates in a signal and a control region, with normalization, jet-energy-scale, MC-statistics and luminosity uncertainties — pre/post-fit yields, MINOS, pulls, the impact ranking, significance and the CLs limit with its band, checked with toys |
 | [`splot_lifetime`](crates/oxifit/examples/splot_lifetime.rs) | A B⁰ lifetime from sWeights: an extended mass fit, the weights, a weighted decay-time fit with naive, SumW2 and asymptotic errors, and 300 toys showing only the asymptotic ones cover |
 | [`tag_and_probe`](crates/oxifit/examples/tag_and_probe.rs) | A trigger efficiency by tag and probe: simultaneous pass/fail Z fits per probe-pT bin (ε a shared parameter, MINOS errors), a bin-averaged turn-on fit, and toys of binomial vs χ² efficiency fits |
+| [`bayesian_fit`](crates/oxifit/examples/bayesian_fit.rs) | Bayesian and frequentist side by side: a peak's posterior intervals against MINOS, and a small signal's 95 % credible upper limit against CLs (asymptotic and toys) |
 | [`resonance_search`](crates/oxifit/examples/resonance_search.rs) | A complete bump hunt: background-function choice (likelihood-ratio test) and its spurious signal, local significance vs mass, the look-elsewhere correction from toy scans, the signal fit, and CLs limits with the expected band, cross-checked with toys (`--release`: a few seconds) |
 
 ## Compared with ROOT, iminuit, scipy and zfit
