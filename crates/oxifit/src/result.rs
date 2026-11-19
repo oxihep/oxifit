@@ -324,6 +324,15 @@ pub struct FitOptions {
     /// events. Default `false`; applies to the unbinned likelihoods (MINOS
     /// errors are not corrected).
     pub sumw2: bool,
+    /// Give a fit to *weighted* events (sWeights, efficiency weights) its
+    /// asymptotically correct covariance (Langenbruch, EPJC 82 (2022) 393):
+    /// `V = C·D·C`, `C` HESSE's covariance and `D` the sum over events of
+    /// their squared-weighted score outer products. Unlike
+    /// [`sumw2`](Self::sumw2) it is right for weights of either sign and any
+    /// size; it takes precedence when both are set. Default `false`; applies to
+    /// the unbinned likelihoods of a single dataset (MINOS errors are not
+    /// corrected).
+    pub asymptotic: bool,
     /// Use the model's analytic gradient ([`Model::with_gradient`](crate::Model::with_gradient))
     /// when it has one (default `true`): MIGRAD takes exact cost derivatives,
     /// Levenberg–Marquardt an exact Jacobian, L-BFGS-B exact gradients. Turn
@@ -359,6 +368,7 @@ impl Default for FitOptions {
             minos: false,
             hesse: true,
             sumw2: false,
+            asymptotic: false,
             gradient: true,
             minimizer: Minimizer::default(),
             strategy: 1,
@@ -417,6 +427,13 @@ impl FitOptions {
     #[must_use]
     pub fn with_sumw2(mut self, on: bool) -> FitOptions {
         self.sumw2 = on;
+        self
+    }
+    /// Give a weighted fit the asymptotically correct covariance (see the
+    /// [`asymptotic`](Self::asymptotic) field).
+    #[must_use]
+    pub fn with_asymptotic_errors(mut self, on: bool) -> FitOptions {
+        self.asymptotic = on;
         self
     }
     /// Use the model's analytic gradient when it has one (see the

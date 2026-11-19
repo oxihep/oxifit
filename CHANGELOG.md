@@ -8,6 +8,18 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **sWeights** (sPlot, Pivk and Le Diberder): `SWeights::compute` from the
+  species' shapes in a discriminating variable and their fitted yields, with
+  the yields' covariance. The weights sum to the yields and, at the extended
+  fit's minimum, to one per event (`tests/splot.rs`).
+- **The asymptotically correct covariance of weighted unbinned fits**
+  (Langenbruch, EPJC 82 (2022) 393): `FitOptions::with_asymptotic_errors`,
+  `V = C·D·C` from the events' weighted scores. It reduces to HESSE for
+  unweighted events, ignores a constant weight (where the naive errors
+  shrink), and covers on sWeighted toys where SumW2 does not.
+- **`splot_lifetime` example**: a B⁰ lifetime from sWeights, with the three
+  error estimates and their coverage.
+
 - **Template fits with systematic uncertainties** (the HistFactory model of
   ROOT and pyhf): `TemplateModel` of `Channel`s and `Sample`s with the
   `norm_factor`, `norm_sys`, `histo_sys`, `stat_error`, `shape_sys`, `lumi`

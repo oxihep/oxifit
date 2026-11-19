@@ -93,7 +93,6 @@ pub(crate) fn sym_eigen(a: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
 /// Invert a small square matrix by Gauss–Jordan elimination with partial
 /// pivoting; `None` if singular. Used only for the tiny (few-parameter)
 /// covariance, so an O(n³) dense solve is plenty.
-#[cfg(feature = "argmin")]
 pub(crate) fn invert(m: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
     let n = m.len();
     if n == 0 {
