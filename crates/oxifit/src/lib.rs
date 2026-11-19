@@ -44,5 +44,5 @@ pub use model::Model;
 /// different lengths (from `oxistats`).
 pub use oxistats::StatError;
 pub use result::{
-    DifferentialEvolution, FitMethod, FitOptions, FitResult, Loss, Minimizer, MultiStart,
+    CmaEs, DifferentialEvolution, FitMethod, FitOptions, FitResult, Loss, Minimizer, MultiStart,
 };

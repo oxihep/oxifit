@@ -6,7 +6,8 @@
 //! the middle of the window, a guessed width — without looking at the data.
 //!
 //! A local fit (MIGRAD) only finds the minimum nearest its seed, and from here
-//! that is not the peak. The global searches look over the whole mass window
+//! that is not the peak. The global searches (multistart, differential
+//! evolution, CMA-ES) look over the whole mass window
 //! (the `limit` on `mean` is the search range) before MIGRAD polishes the
 //! answer, so they find it, at the price of many more cost evaluations.
 //!
@@ -20,7 +21,8 @@
 //! ```
 
 use oxifit::{
-    DifferentialEvolution, FitExt, FitMethod, FitOptions, Minimizer, Model, MultiStart, Points,
+    CmaEs, DifferentialEvolution, FitExt, FitMethod, FitOptions, Minimizer, Model, MultiStart,
+    Points,
 };
 
 /// A small reproducible generator: uniform, Gaussian and exponential draws.
@@ -97,6 +99,7 @@ fn main() {
             "differential evolution",
             Minimizer::DifferentialEvolution(DifferentialEvolution::new()),
         ),
+        ("CMA-ES", Minimizer::CmaEs(CmaEs::new())),
     ] {
         let fit = data.fit_opts(&model, &lik.minimizer(minimizer));
         println!(

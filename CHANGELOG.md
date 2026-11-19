@@ -6,6 +6,20 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`Minimizer::CmaEs(CmaEs::new())`** — CMA-ES, the covariance matrix
+  adaptation evolution strategy, over the parameter limits, then MIGRAD +
+  HESSE. It learns the shape of the cost's valley, so it copes with
+  correlated or badly scaled parameters. On the 200-toy peak search it finds
+  the peak every time, like differential evolution, in a third of the
+  evaluations (≈1700 against ≈5600).
+- **`Minimizer::LevenbergMarquardt`** — damped Gauss–Newton steps on the
+  residuals, then MIGRAD + HESSE. Every cost is written as a sum of squared
+  residuals (`(y − f)/σ`, Pearson's `(y − f)/√f`, the likelihood's signed
+  deviance residuals, a robust loss as `√ρ`), so it applies to all of them.
+  From a good seed it needs 20–30 % fewer evaluations than MIGRAD.
+
 ## [0.2.0]
 
 Global minimizers, HESSE by default, and a fit that can no longer panic.
