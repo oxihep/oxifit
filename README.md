@@ -68,6 +68,15 @@ treats the model as the expected event density, so its integral (the yield) is
 fitted too. For weighted events, `FitOptions::with_sumw2(true)` corrects the
 covariance for the weights (RooFit's `SumW2Error`).
 
+## Toy studies
+
+`Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,
+n)` (events; `.extended()` for a Poisson count) generates pseudo-data from a
+model at known parameters; `.run(&model, &opts, ntoys)` fits each sample. The
+`ToyStudy` gives every fit, the pulls `(fitted − true)/error` and
+`pull_summary` — mean 0 and width 1 for an unbiased fit with correct errors
+(RooFit's `RooMCStudy`).
+
 ## Profiles and contours
 
 Beyond the parabolic errors (and MINOS), `data.profile(&model, &opts, "mean",

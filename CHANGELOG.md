@@ -8,6 +8,14 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Toy studies** (RooFit's `RooMCStudy`). `Toys::binned(&truth, &xs)`
+  draws Poisson counts at fixed points; `Toys::unbinned(&truth, range, n)`
+  draws `n` events from the model's shape (`.extended()`: a Poisson number of
+  mean `∫f`). `.run(&model, &opts, ntoys)` fits each sample into a
+  `ToyStudy`, with `pulls`, `values`, `valid_fraction` and `pull_summary`
+  (the pulls' mean and width with their standard errors). Seeded and
+  reproducible; Poisson draws are exact at any mean (PTRS above 10).
+
 - **Unbinned likelihood fits.** `Events::new(&values)` /
   `Events::weighted(&values, &weights)` hold individual events.
   `FitMethod::UnbinnedLikelihood` minimizes `−2·Σ w·ln(f/∫f)`, the model
