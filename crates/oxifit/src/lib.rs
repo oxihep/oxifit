@@ -44,6 +44,7 @@ mod efficiency;
 mod engine;
 mod fitter;
 mod inference;
+mod mcmc;
 mod model;
 mod result;
 mod rng;
@@ -63,6 +64,7 @@ pub use inference::{
     Cls, Discovery, HypoTest, TestStatistic, ToyCls, ToyDiscovery, UpperLimit, global_significance,
     upcrossings,
 };
+pub use mcmc::{Chain, Sampler};
 pub use model::Model;
 /// The error [`Points::new`] and [`Points::unweighted`] return for inputs of
 /// different lengths (from `oxistats`).

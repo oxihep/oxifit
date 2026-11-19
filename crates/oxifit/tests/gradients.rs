@@ -153,3 +153,39 @@ fn lbfgsb_agrees_with_migrad_and_holds_limits() {
     let fit = line.fit_opts(&capped, &FitOptions::new().minimizer(Minimizer::LBfgsB));
     assert!((fit.params[1] - 1.5).abs() < 1e-3, "{fit:?}");
 }
+
+/// MINOS with an analytic gradient: the gradient path builds its covariance
+/// from the gradient, and MINOS must not start from MIGRAD's running error
+/// estimate (which gave a ±0.0002 interval for an amplitude known to ±4.5).
+#[test]
+fn minos_with_an_analytic_gradient_matches_the_parabolic_errors() {
+    use oxifit::{FitExt, FitMethod, FitOptions, Model, Points};
+    let x: Vec<f64> = (0..40).map(|i| 0.25 + 0.5 * f64::from(i)).collect();
+    let truth =
+        |v: f64| 60.0 * (-0.5 * ((v - 9.0) / 1.2f64).powi(2)).exp() + 30.0 * (-v / 8.0).exp();
+    let y: Vec<f64> = x
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (truth(v) + (f64::from(i as u32) * 2.3).sin() * truth(v).sqrt()).round())
+        .collect();
+    let data = Points::unweighted(&x, &y).unwrap();
+    let model = (Model::gaussian("peak") + Model::exponential("bkg"))
+        .with_params(vec![50.0, 8.5, 1.5, 3.0, -0.1])
+        .limit("peak.sigma", 0.1, 5.0)
+        .limit("peak.constant", 0.0, 500.0);
+    let fit = data.fit_opts(
+        &model,
+        &FitOptions::new()
+            .method(FitMethod::Likelihood)
+            .with_minos(true),
+    );
+    assert!(fit.valid);
+    for (k, &(lo, hi)) in fit.minos.as_ref().unwrap().iter().enumerate() {
+        let half = 0.5 * (hi - lo);
+        assert!(
+            (half / fit.errors[k] - 1.0).abs() < 0.1,
+            "p{k}: MINOS ({lo}, {hi}) vs ±{}",
+            fit.errors[k]
+        );
+    }
+}
