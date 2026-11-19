@@ -89,8 +89,9 @@ pub enum Minimizer {
     LevenbergMarquardt,
     /// Gradient-free Nelder–Mead simplex via the
     /// [`argmin`](https://crates.io/crates/argmin) crate (requires the `argmin`
-    /// feature). Parameter errors come from a numerical Hessian at the minimum;
-    /// MINOS is not available. A useful independent cross-check of Minuit2.
+    /// feature). It moves in Minuit's internal coordinates, so limits hold
+    /// exactly; parameter errors come from a numerical Hessian at the minimum,
+    /// and MINOS is not available. A useful independent cross-check of Minuit2.
     #[cfg(feature = "argmin")]
     NelderMead,
 }

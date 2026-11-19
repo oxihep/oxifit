@@ -21,6 +21,8 @@ mod lm;
 pub(crate) mod minuit;
 #[cfg(feature = "argmin")]
 mod nelder_mead;
+#[cfg(feature = "argmin")]
+mod transform;
 
 use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -99,11 +101,19 @@ impl Fit<'_> {
 /// `x` in `opts.range` (default: all); Neyman chi-square additionally drops
 /// points with no usable error (`sigma <= 0`).
 pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitResult {
+    // A setter given a name the model does not have: not the fit that was
+    // asked for (`Model::check` says which name).
+    if model.check().is_err() {
+        return failed(model);
+    }
     finish_run(model, with_fit(all, model, opts, |fit| dispatch(fit, opts)))
 }
 
 /// Fit `model` to a prepared data term (a simultaneous fit's combined cost).
 pub(crate) fn run_terms(model: &Model, opts: &FitOptions, term: &DataTerm) -> FitResult {
+    if model.check().is_err() {
+        return failed(model);
+    }
     finish_run(
         model,
         with_terms(model, opts, term, |fit| dispatch(fit, opts)),

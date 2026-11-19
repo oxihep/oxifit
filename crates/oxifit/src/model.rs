@@ -38,6 +38,10 @@ pub struct Model {
     /// For a sum ([`Model::sum`]): its parts' names, in order, so `+` can
     /// append to it rather than nest it.
     pub(crate) parts: Option<Vec<String>>,
+    /// Names given to [`limit`](Model::limit), [`fix`](Model::fix) and the
+    /// other per-parameter setters that match no parameter — a typo would
+    /// otherwise be silently ignored. See [`check`](Model::check).
+    pub(crate) unknown: Vec<String>,
 }
 
 impl Model {
@@ -56,12 +60,49 @@ impl Model {
             constraints,
             func: std::sync::Arc::new(func),
             parts: None,
+            unknown: Vec::new(),
         }
     }
 
     /// Index of the parameter named `name`.
     fn index_of(&self, name: &str) -> Option<usize> {
         self.param_names.iter().position(|n| n == name)
+    }
+
+    /// Index of the parameter named `name` for a setter, recording the name
+    /// as unknown when there is none.
+    fn setter_index(&mut self, name: &str) -> Option<usize> {
+        let i = self.index_of(name);
+        if i.is_none() && !self.unknown.iter().any(|u| u == name) {
+            self.unknown.push(name.to_string());
+        }
+        i
+    }
+
+    /// Check that every parameter name given to the per-parameter setters
+    /// ([`limit`](Self::limit), [`lower_limit`](Self::lower_limit),
+    /// [`upper_limit`](Self::upper_limit), [`fix`](Self::fix),
+    /// [`step`](Self::step), [`constrain`](Self::constrain)) names a parameter
+    /// of the model.
+    ///
+    /// A name that matches none — usually a typo — would make the setter do
+    /// nothing, and the fit a different one than intended. Such a model fits
+    /// as **invalid** (`FitResult::valid` is `false`); this tells you why.
+    ///
+    /// ```
+    /// # use oxifit::{FitError, Model};
+    /// let m = Model::gaussian("g").lower_limit("sigam", 0.0);
+    /// assert_eq!(m.check(), Err(FitError::UnknownParameter("sigam".into())));
+    /// assert!(Model::gaussian("g").lower_limit("sigma", 0.0).check().is_ok());
+    /// ```
+    ///
+    /// # Errors
+    /// [`FitError::UnknownParameter`](crate::FitError::UnknownParameter) with the first unknown name.
+    pub fn check(&self) -> Result<(), crate::FitError> {
+        match self.unknown.first() {
+            Some(name) => Err(crate::FitError::UnknownParameter(name.clone())),
+            None => Ok(()),
+        }
     }
 
     /// Mutable access to a parameter's constraints, growing the vector if a
@@ -74,10 +115,12 @@ impl Model {
         &mut self.constraints[i]
     }
 
-    /// Constrain parameter `name` to `[lower, upper]` during the fit.
+    /// Constrain parameter `name` to `[lower, upper]` during the fit. A name
+    /// that matches no parameter makes the fit invalid (see
+    /// [`check`](Self::check)), as for the other per-parameter setters.
     #[must_use]
     pub fn limit(mut self, name: &str, lower: f64, upper: f64) -> Model {
-        if let Some(i) = self.index_of(name) {
+        if let Some(i) = self.setter_index(name) {
             let c = self.constraint_mut(i);
             c.lower = Some(lower);
             c.upper = Some(upper);
@@ -88,7 +131,7 @@ impl Model {
     /// Constrain parameter `name` to be `>= lower` (e.g. a positive width).
     #[must_use]
     pub fn lower_limit(mut self, name: &str, lower: f64) -> Model {
-        if let Some(i) = self.index_of(name) {
+        if let Some(i) = self.setter_index(name) {
             self.constraint_mut(i).lower = Some(lower);
         }
         self
@@ -97,7 +140,7 @@ impl Model {
     /// Constrain parameter `name` to be `<= upper`.
     #[must_use]
     pub fn upper_limit(mut self, name: &str, upper: f64) -> Model {
-        if let Some(i) = self.index_of(name) {
+        if let Some(i) = self.setter_index(name) {
             self.constraint_mut(i).upper = Some(upper);
         }
         self
@@ -106,7 +149,7 @@ impl Model {
     /// Hold parameter `name` fixed at its current value during the fit.
     #[must_use]
     pub fn fix(mut self, name: &str) -> Model {
-        if let Some(i) = self.index_of(name) {
+        if let Some(i) = self.setter_index(name) {
             self.constraint_mut(i).fixed = true;
         }
         self
@@ -116,7 +159,7 @@ impl Model {
     /// value, with a small floor).
     #[must_use]
     pub fn step(mut self, name: &str, step: f64) -> Model {
-        if let Some(i) = self.index_of(name) {
+        if let Some(i) = self.setter_index(name) {
             self.constraint_mut(i).step = Some(step);
         }
         self
@@ -140,7 +183,7 @@ impl Model {
     /// ```
     #[must_use]
     pub fn constrain(mut self, name: &str, mean: f64, sigma: f64) -> Model {
-        if let Some(i) = self.index_of(name) {
+        if let Some(i) = self.setter_index(name) {
             self.constraint_mut(i).gauss = (sigma > 0.0).then_some((mean, sigma));
         }
         self
@@ -171,6 +214,7 @@ impl Model {
             constraints: Vec::new(),
             func: std::sync::Arc::new(|_, _| 0.0),
             parts: Some(Vec::new()),
+            unknown: Vec::new(),
         };
         parts.iter().fold(empty, |sum, part| sum.push_part(part))
     }
@@ -202,6 +246,11 @@ impl Model {
                 .push(part.constraints.get(k).copied().unwrap_or_default());
         }
         self.params.extend_from_slice(&part.params);
+        for u in &part.unknown {
+            if !self.unknown.contains(u) {
+                self.unknown.push(u.clone());
+            }
+        }
         let (head, tail) = (self.func.clone(), part.func.clone());
         self.func = std::sync::Arc::new(move |x, p| {
             head(x, &p[..offset]) + tail(x, &p[offset..offset + n])

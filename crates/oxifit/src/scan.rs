@@ -109,8 +109,10 @@ pub struct Contour {
     pub points: Vec<(f64, f64)>,
 }
 
-/// The index of free parameter `name`, or the reason it cannot be scanned.
+/// The index of free parameter `name`, or the reason it cannot be scanned
+/// (including a setter's unknown name: see [`Model::check`]).
 fn free_index(model: &Model, name: &str) -> Result<usize, FitError> {
+    model.check()?;
     let i = model
         .param_names
         .iter()

@@ -3,6 +3,7 @@
 
 use super::Fit;
 use super::linalg::{hessian, invert};
+use super::transform::Transform;
 use crate::result::FitResult;
 
 /// Scatter a free-parameter sub-vector back into the full parameter vector
@@ -19,10 +20,11 @@ fn scatter(sub: &[f64], free: &[usize], init_full: &[f64]) -> Vec<f64> {
 const NELDER_MEAD_MAX_ITERS: u64 = 10_000;
 
 /// Minimize with the gradient-free Nelder–Mead simplex from the `argmin` crate.
-/// Optimizes the free parameters only (fixed ones are pinned); per-parameter
-/// limits are enforced with a soft quadratic penalty. Parameter errors and the
-/// covariance come from a numerical Hessian of the (unpenalized) cost at the
-/// minimum (`cov = 2·H⁻¹`); MINOS is not provided.
+/// Optimizes the free parameters only (fixed ones are pinned) in Minuit's
+/// internal coordinates, so per-parameter limits hold exactly. Parameter
+/// errors and the covariance come from a numerical Hessian of the cost in the
+/// model's own coordinates at the minimum (`cov = 2·H⁻¹`); MINOS is not
+/// provided.
 pub(crate) fn minimize(fit: &Fit) -> FitResult {
     minimize_capped(fit, NELDER_MEAD_MAX_ITERS)
 }
@@ -40,26 +42,20 @@ fn minimize_capped(fit: &Fit, max_iters: u64) -> FitResult {
     let free = fit.free();
     let init_full = fit.seed();
 
-    // The cost over the free subspace, with limits as a soft quadratic penalty
-    // (large but finite, so the simplex is comparable and bounces back in-bounds;
-    // for an interior minimum the penalty is inactive there).
-    let penalized = |sub: &[f64]| -> f64 {
-        let mut pen = 0.0;
-        for (k, &i) in free.iter().enumerate() {
-            let c = fit.constraint(i);
-            if let Some(lo) = c.lower
-                && sub[k] < lo
-            {
-                pen += (lo - sub[k]) * (lo - sub[k]);
-            }
-            if let Some(hi) = c.upper
-                && sub[k] > hi
-            {
-                pen += (sub[k] - hi) * (sub[k] - hi);
-            }
-        }
-        cost(&scatter(sub, &free, &init_full)) + 1e30 * pen
+    // The simplex moves in Minuit's internal coordinates: a limited parameter
+    // is a sine (two limits) or square-root (one) of an unbounded internal
+    // value, so every vertex maps inside the limits.
+    let transforms: Vec<Transform> = free
+        .iter()
+        .map(|&i| Transform::of(&fit.constraint(i)))
+        .collect();
+    let to_ext = |int: &[f64]| -> Vec<f64> {
+        int.iter()
+            .zip(&transforms)
+            .map(|(&v, t)| t.to_ext(v))
+            .collect()
     };
+    let internal = |int: &[f64]| -> f64 { cost(&scatter(&to_ext(int), &free, &init_full)) };
 
     /// Adapter wrapping our `Fn(&[f64]) -> f64` as an argmin problem.
     struct Prob<F>(F);
@@ -72,11 +68,16 @@ fn minimize_capped(fit: &Fit, max_iters: u64) -> FitResult {
     }
 
     // Initial simplex: the seed point plus one vertex per free parameter,
-    // perturbed by its step (the hint, else 10 % of the value with a floor).
-    let seed: Vec<f64> = free.iter().map(|&i| init_full[i]).collect();
+    // perturbed by its step (the hint, else 10 % of the value with a floor),
+    // converted to an internal step.
+    let seed: Vec<f64> = free
+        .iter()
+        .zip(&transforms)
+        .map(|(&i, t)| t.to_int(init_full[i]))
+        .collect();
     let mut simplex = vec![seed.clone()];
     for (k, &i) in free.iter().enumerate() {
-        let step = fit.step(i, seed[k]);
+        let step = transforms[k].int_step(seed[k], fit.step(i, init_full[i]));
         let mut v = seed.clone();
         v[k] += step;
         simplex.push(v);
@@ -85,7 +86,7 @@ fn minimize_capped(fit: &Fit, max_iters: u64) -> FitResult {
     let Ok(solver) = NelderMead::new(simplex).with_sd_tolerance(1e-10) else {
         return super::failed(model);
     };
-    let Ok(res) = Executor::new(Prob(&penalized), solver)
+    let Ok(res) = Executor::new(Prob(&internal), solver)
         .configure(|s| s.max_iters(max_iters))
         .run()
     else {
@@ -99,8 +100,10 @@ fn minimize_capped(fit: &Fit, max_iters: u64) -> FitResult {
         Some(TerminationReason::SolverConverged)
     );
 
+    // Errors from the Hessian in the external (model) coordinates.
+    let best = to_ext(&best);
     let params = scatter(&best, &free, &init_full);
-    let chi2 = cost(&params); // the clean cost (no penalty) at the minimum
+    let chi2 = cost(&params);
     let (errors, covariance) = hessian_errors(&best, &free, &init_full, &cost);
 
     let mut r = FitResult::new(

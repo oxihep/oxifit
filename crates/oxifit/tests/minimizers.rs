@@ -195,3 +195,44 @@ fn levenberg_marquardt_minimizes_every_cost() {
         }
     }
 }
+
+#[cfg(feature = "argmin")]
+#[test]
+fn nelder_mead_holds_one_and_two_sided_limits_exactly() {
+    // The data want a slope of 2 and an intercept of 0.
+    let data = Points::unweighted(&[0.0, 1.0, 2.0, 3.0], &[0.0, 2.0, 4.0, 6.0]).unwrap();
+    let nm = FitOptions::new().minimizer(Minimizer::NelderMead);
+    for (model, slope) in [
+        (
+            Model::polynomial("l", 1)
+                .with_params(vec![0.0, 1.0])
+                .limit("p1", -1.0, 1.5),
+            1.5,
+        ),
+        (
+            Model::polynomial("l", 1)
+                .with_params(vec![0.0, 1.0])
+                .upper_limit("p1", 1.2),
+            1.2,
+        ),
+        (
+            Model::polynomial("l", 1)
+                .with_params(vec![0.0, 3.0])
+                .lower_limit("p1", 2.5),
+            2.5,
+        ),
+    ] {
+        let fit = data.fit_opts(&model, &nm);
+        assert!((fit.params[1] - slope).abs() < 1e-4, "{fit:?}");
+        // With the slope held at the limit, the best intercept is
+        // mean(y) − slope·mean(x).
+        let intercept = 3.0 - slope * 1.5;
+        assert!((fit.params[0] - intercept).abs() < 1e-3, "{fit:?}");
+    }
+    // An interior minimum is unaffected by a far limit.
+    let wide = Model::polynomial("l", 1)
+        .with_params(vec![0.5, 1.0])
+        .limit("p1", -10.0, 10.0);
+    let fit = data.fit_opts(&wide, &nm);
+    assert!(fit.valid && (fit.params[1] - 2.0).abs() < 1e-5, "{fit:?}");
+}
