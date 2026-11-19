@@ -27,7 +27,8 @@ pub enum FitMethod {
 /// [`Minuit2Combined`](Self::Minuit2Combined), [`Simplex`](Self::Simplex)) start
 /// from the model's parameters and find the nearest minimum. The global searches
 /// ([`MultiStart`](Self::MultiStart),
-/// [`DifferentialEvolution`](Self::DifferentialEvolution)) look over a box of
+/// [`DifferentialEvolution`](Self::DifferentialEvolution),
+/// [`CmaEs`](Self::CmaEs)) look over a box of
 /// parameter values first — useful when the seed may sit in the wrong basin
 /// (a peak whose position is unknown, a multimodal model) — and then polish
 /// the best point with MIGRAD, so every Minuit-based result carries MIGRAD +
@@ -60,6 +61,18 @@ pub enum Minimizer {
     /// point. Costs thousands of cost evaluations, but finds the global
     /// minimum of a multimodal cost far more reliably than one local fit.
     DifferentialEvolution(DifferentialEvolution),
+    /// CMA-ES — the covariance matrix adaptation evolution strategy — over the
+    /// search box, then MIGRAD from the best point. It learns the shape of the
+    /// cost's valley as it searches, so it copes with strongly correlated or
+    /// badly scaled parameters better than differential evolution, usually in
+    /// fewer evaluations.
+    CmaEs(CmaEs),
+    /// Levenberg–Marquardt from the model's seed: damped Gauss–Newton steps on
+    /// the residuals (each cost is a sum of squared residuals; the likelihood
+    /// as signed deviance residuals), limits enforced by projection, then
+    /// MIGRAD + HESSE. A local method like MIGRAD — `scipy.optimize.curve_fit`'s
+    /// default — that often needs fewer evaluations on least-squares fits.
+    LevenbergMarquardt,
     /// Gradient-free Nelder–Mead simplex via the
     /// [`argmin`](https://crates.io/crates/argmin) crate (requires the `argmin`
     /// feature). Parameter errors come from a numerical Hessian at the minimum;
@@ -160,6 +173,64 @@ impl DifferentialEvolution {
 impl Default for DifferentialEvolution {
     fn default() -> DifferentialEvolution {
         DifferentialEvolution::new()
+    }
+}
+
+/// Settings for [`Minimizer::CmaEs`].
+///
+/// ```
+/// # use oxifit::{CmaEs, FitOptions, Minimizer};
+/// let opts = FitOptions::new().minimizer(Minimizer::CmaEs(CmaEs::new().seed(3)));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CmaEs {
+    /// Offspring per generation, `λ`; `None` (the default) is 8 per free
+    /// parameter, between 16 and 200 — larger than the textbook
+    /// `4 + ⌊3·ln n⌋`, which is tuned for local refinement rather than a
+    /// global search. A larger population searches more globally, at more
+    /// evaluations per generation.
+    pub population: Option<usize>,
+    /// The most generations (default 1000). The search stops earlier once the
+    /// distribution has collapsed or the population's costs agree within 0.01.
+    pub generations: usize,
+    /// Seed of the generator: the same seed gives the same fit.
+    pub seed: u64,
+}
+
+impl CmaEs {
+    /// The default settings.
+    #[must_use]
+    pub fn new() -> CmaEs {
+        CmaEs {
+            population: None,
+            generations: 1000,
+            seed: DEFAULT_SEED,
+        }
+    }
+    /// Set the population size `λ` (at least 4).
+    #[must_use]
+    pub fn population(mut self, n: usize) -> CmaEs {
+        self.population = Some(n);
+        self
+    }
+    /// Set the most generations.
+    #[must_use]
+    pub fn generations(mut self, n: usize) -> CmaEs {
+        self.generations = n;
+        self
+    }
+    /// Set the generator seed.
+    #[must_use]
+    pub fn seed(mut self, seed: u64) -> CmaEs {
+        self.seed = seed;
+        self
+    }
+}
+
+impl Default for CmaEs {
+    fn default() -> CmaEs {
+        CmaEs::new()
     }
 }
 

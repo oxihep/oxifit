@@ -248,6 +248,8 @@ mod tests {
         let fit = Fit {
             model: &model,
             cost: &line_chi2,
+            residuals: &|_, _| {},
+            n_residuals: 0,
             ndf: 4,
             opts: &opts,
             gof: true,

@@ -13,10 +13,10 @@ use crate::result::{DifferentialEvolution, FitResult, MultiStart};
 
 /// A small deterministic generator (SplitMix64): global searches must be
 /// reproducible from their seed, and need nothing stronger.
-struct Rng(u64);
+pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
-    fn next_u64(&mut self) -> u64 {
+    pub(super) fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -25,20 +25,27 @@ impl Rng {
     }
 
     /// Uniform in `[0, 1)`.
-    fn uniform(&mut self) -> f64 {
+    pub(super) fn uniform(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
 
     /// Uniform in `0..n` (`n > 0`).
-    fn below(&mut self, n: usize) -> usize {
+    pub(super) fn below(&mut self, n: usize) -> usize {
         // n is a population or dimension count: the modulo bias is negligible.
         (self.next_u64() % n as u64) as usize
+    }
+
+    /// A standard normal draw (Box–Muller).
+    pub(super) fn gauss(&mut self) -> f64 {
+        let u1 = 1.0 - self.uniform(); // in (0, 1]: ln is finite
+        let u2 = self.uniform();
+        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }
 }
 
 /// The search box `[lo, hi]` of each free parameter: its limits when it has
 /// both; otherwise the open side reaches 10 initial steps beyond the seed.
-fn search_box(fit: &Fit, free: &[usize], seed: &[f64]) -> Vec<(f64, f64)> {
+pub(super) fn search_box(fit: &Fit, free: &[usize], seed: &[f64]) -> Vec<(f64, f64)> {
     free.iter()
         .map(|&i| {
             let c = fit.constraint(i);
@@ -72,7 +79,7 @@ fn latin_hypercube(rng: &mut Rng, bx: &[(f64, f64)], n: usize) -> Vec<Vec<f64>> 
 }
 
 /// A full parameter vector: `seed` with the free parameters set from `sub`.
-fn scatter(seed: &[f64], free: &[usize], sub: &[f64]) -> Vec<f64> {
+pub(super) fn scatter(seed: &[f64], free: &[usize], sub: &[f64]) -> Vec<f64> {
     let mut full = seed.to_vec();
     for (&i, &v) in free.iter().zip(sub) {
         full[i] = v;
@@ -136,7 +143,7 @@ pub(crate) fn multi_start(fit: &Fit, cfg: MultiStart) -> FitResult {
 const CROSSOVER: f64 = 0.9;
 /// Stop once every member's cost is within this of the best: the population
 /// then sits in one basin, a small fraction of a 1σ (`Δcost = 1`) contour.
-const COST_SPREAD: f64 = 1e-2;
+pub(super) const COST_SPREAD: f64 = 1e-2;
 
 /// Differential evolution (`DE/rand/1/bin`, dithered `F ∈ [0.5, 1)`) over the
 /// free parameters inside the search box, the model's seed among the initial

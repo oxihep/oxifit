@@ -4,7 +4,7 @@
 mod common;
 
 use oxifit::{
-    DifferentialEvolution, FitExt, FitMethod, FitOptions, FitResult, Loss, Minimizer, Model,
+    CmaEs, DifferentialEvolution, FitExt, FitMethod, FitOptions, FitResult, Loss, Minimizer, Model,
     MultiStart, Points,
 };
 
@@ -22,10 +22,11 @@ fn line() -> (Points, Model) {
     (data, model)
 }
 
-fn global() -> [Minimizer; 2] {
+fn global() -> [Minimizer; 3] {
     [
         Minimizer::MultiStart(MultiStart::new(8)),
         Minimizer::DifferentialEvolution(DifferentialEvolution::new()),
+        Minimizer::CmaEs(CmaEs::new()),
     ]
 }
 
@@ -34,7 +35,11 @@ fn every_minuit_backend_agrees_on_a_line() {
     let (data, model) = line();
     let reference = data.fit(&model);
     assert!(reference.valid, "{reference:?}");
-    let mut backends = vec![Minimizer::Minuit2Combined, Minimizer::Simplex];
+    let mut backends = vec![
+        Minimizer::Minuit2Combined,
+        Minimizer::Simplex,
+        Minimizer::LevenbergMarquardt,
+    ];
     backends.extend(global());
     for m in backends {
         let fit = data.fit_opts(&model, &FitOptions::new().minimizer(m));
@@ -159,4 +164,34 @@ fn a_result_can_be_built_by_hand() {
     assert!(r.minos.is_none() && r.covariance.is_none() && r.edm.is_nan());
     assert_eq!(r.nfcn, 0);
     assert!((r.chi2_per_ndf() - 0.875).abs() < 1e-12);
+}
+
+#[test]
+fn levenberg_marquardt_minimizes_every_cost() {
+    // LM works on residuals whose squares must sum to the cost: it must land
+    // on the same minimum as MIGRAD for every method, robust loss included.
+    let data = common::peak_data();
+    let model = common::peak_model(3.2).with_params(vec![180.0, 3.2, 0.7, 18.0]);
+    for method in [
+        FitMethod::Chi2,
+        FitMethod::PearsonChi2,
+        FitMethod::Likelihood,
+    ] {
+        for loss in [Loss::Linear, Loss::SoftL1] {
+            let opts = FitOptions::new().method(method).loss(loss);
+            let migrad = data.fit_opts(&model, &opts);
+            let lm = data.fit_opts(&model, &opts.minimizer(Minimizer::LevenbergMarquardt));
+            assert!(migrad.valid && lm.valid, "{method:?}/{loss:?}: {lm:?}");
+            assert!(
+                (lm.fval - migrad.fval).abs() < 1e-3,
+                "{method:?}/{loss:?}: LM {} vs MIGRAD {}",
+                lm.fval,
+                migrad.fval
+            );
+            for i in 0..4 {
+                let pull = (lm.params[i] - migrad.params[i]) / migrad.errors[i];
+                assert!(pull.abs() < 0.05, "{method:?}/{loss:?} p{i}: {lm:?}");
+            }
+        }
+    }
 }

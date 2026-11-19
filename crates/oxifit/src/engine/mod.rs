@@ -8,11 +8,16 @@
 //! - [`minuit`] — MIGRAD, MIGRAD-then-SIMPLEX, or SIMPLEX, and the shared
 //!   [`minuit::finish`] step (HESSE, MINOS, the [`FitResult`]) every
 //!   Minuit-polished backend ends with;
-//! - [`global`] — multistart and differential evolution, which search for the
-//!   right basin and then polish the best point with MIGRAD;
+//! - [`global`] and [`cmaes`] — multistart, differential evolution and
+//!   CMA-ES, which search for the right basin and then polish the best point
+//!   with MIGRAD;
+//! - [`lm`] — Levenberg–Marquardt on the residual vector, then MIGRAD;
 //! - `nelder_mead` — the independent argmin simplex (`argmin` feature).
 
+mod cmaes;
 mod global;
+mod linalg;
+mod lm;
 mod minuit;
 #[cfg(feature = "argmin")]
 mod nelder_mead;
@@ -30,6 +35,11 @@ pub(crate) struct Fit<'a> {
     pub(crate) model: &'a Model,
     /// The cost over the full parameter vector (fixed parameters included).
     pub(crate) cost: &'a dyn Fn(&[f64]) -> f64,
+    /// The residuals over the full parameter vector, written into a slice of
+    /// [`n_residuals`](Self::n_residuals): their squares sum to the cost.
+    pub(crate) residuals: &'a dyn Fn(&[f64], &mut [f64]),
+    /// How many residuals there are.
+    pub(crate) n_residuals: usize,
     /// Degrees of freedom: fitted points − free parameters.
     pub(crate) ndf: usize,
     /// The fit options (strategy, tolerance, HESSE, MINOS, …).
@@ -145,15 +155,46 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
         }
     };
 
-    // Count every cost evaluation, whichever backend makes it.
+    // The same cost as residuals whose squares sum to it, for least-squares
+    // backends: (y − f)/σ for χ², with a robust loss as √ρ, and the signed
+    // deviance residual √(2·[f − y + y·ln(y/f)]) for the likelihood.
+    let residuals = |p: &[f64], out: &mut [f64]| {
+        for (o, &(x, y, e)) in out.iter_mut().zip(&points) {
+            *o = match method {
+                FitMethod::Chi2 => {
+                    let d = (y - func(x, p)) / e;
+                    robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
+                }
+                FitMethod::PearsonChi2 => {
+                    let f = func(x, p).max(1e-300);
+                    let d = (y - f) / f.sqrt();
+                    robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
+                }
+                FitMethod::Likelihood => {
+                    let f = func(x, p).max(1e-300);
+                    let t = if y > 0.0 { f - y + y * (y / f).ln() } else { f };
+                    (2.0 * t).max(0.0).sqrt().copysign(f - y)
+                }
+            };
+        }
+    };
+
+    // Count every cost evaluation, whichever backend makes it (a residual
+    // vector counts as one).
     let calls = Cell::new(0_usize);
     let counted = |p: &[f64]| {
         calls.set(calls.get() + 1);
         cost(p)
     };
+    let counted_residuals = |p: &[f64], out: &mut [f64]| {
+        calls.set(calls.get() + 1);
+        residuals(p, out);
+    };
     let fit = Fit {
         model,
         cost: &counted,
+        residuals: &counted_residuals,
+        n_residuals: points.len(),
         ndf: points.len() - n_free,
         opts,
         // A robust loss is ignored by the likelihood, so only it changes the
@@ -172,6 +213,8 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
         Minimizer::Simplex => minuit::run(&fit, minuit::Local::Simplex),
         Minimizer::MultiStart(cfg) => global::multi_start(&fit, cfg),
         Minimizer::DifferentialEvolution(cfg) => global::differential_evolution(&fit, cfg),
+        Minimizer::CmaEs(cfg) => cmaes::cma_es(&fit, cfg),
+        Minimizer::LevenbergMarquardt => lm::levenberg_marquardt(&fit),
         #[cfg(feature = "argmin")]
         Minimizer::NelderMead => nelder_mead::minimize(&fit),
     }))
