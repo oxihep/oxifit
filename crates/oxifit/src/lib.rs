@@ -30,7 +30,8 @@
 //!
 //! Any other `−2 ln L` or χ² — your own likelihood, a data fit plus external
 //! measurements ([`CostSum`]) — is a [`Cost`], minimized by a [`Fitter`] with
-//! the same minimizers, errors, MINOS, profiles and contours.
+//! the same minimizers, errors, MINOS, profiles and contours. [`HypoTest`]
+//! turns one into discovery significances, CLs values and upper limits.
 //!
 //! The evaluable, persistable ROOT function objects (`TF1`/`TF2`/`TF3`) live in
 //! [`oxiroot_hist_func`](https://crates.io/crates/oxiroot-hist-func) (re-exported
@@ -41,6 +42,7 @@ mod cost;
 mod data;
 mod engine;
 mod fitter;
+mod inference;
 mod model;
 mod result;
 mod rng;
@@ -53,6 +55,10 @@ pub use data::{
     Events, Events2, Events3, FitData, FitDataNd, FitExt, Point, PointNd, Points, Points2, Points3,
 };
 pub use fitter::Fitter;
+pub use inference::{
+    Cls, Discovery, HypoTest, TestStatistic, ToyCls, ToyDiscovery, UpperLimit, global_significance,
+    upcrossings,
+};
 pub use model::Model;
 /// The error [`Points::new`] and [`Points::unweighted`] return for inputs of
 /// different lengths (from `oxistats`).

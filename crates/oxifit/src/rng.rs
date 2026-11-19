@@ -6,6 +6,13 @@
 pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
+    /// The generator for stream `index` of a study seeded with `seed`: each
+    /// toy gets its own, so a study does not depend on the thread count.
+    pub(crate) fn stream(seed: u64, index: u64) -> Rng {
+        let mut mix = Rng(seed ^ index.wrapping_mul(0xD1B5_4A32_D192_ED03));
+        Rng(mix.next_u64())
+    }
+
     pub(crate) fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;

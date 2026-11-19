@@ -125,6 +125,36 @@ let fit = Fitter::new(&total, seeds)
 `ModelCost::fitter()` starts from the model's own seeds and settings, so
 `ModelCost::new(&d, &m, &o).fitter().fit(&o)` is exactly `d.fit_opts(&m, &o)`.
 
+## Significance and limits
+
+`HypoTest::new(fitter, "mu")` tests a parameter of interest — a signal
+strength — on any cost, with the profile likelihood ratio, the pyhf / RooStats
+recipe:
+
+- `discovery(1.0)`: the observed `q₀`, p-value and significance, and the
+  median significance expected for a signal of strength 1;
+- `cls(mu)`: CLs+b, CLb and CLs at `mu` (`q̃_μ` by default, or `q_μ`), with
+  the expected −2σ…+2σ band;
+- `upper_limit(0.95, (lo, hi))`: the observed 95 % CL upper limit and the
+  expected band (the "Brazil band");
+- `cls_toys` / `discovery_toys`: the same from pseudo-experiments, for small
+  counts, in parallel with the `rayon` feature.
+
+The asymptotic results (Cowan, Cranmer, Gross, Vitells) use the cost's Asimov
+dataset and the toys its pseudo-datasets, which `ModelCost` makes for binned and
+unbinned data (and `CostSum` for sums of them); the `Fitter`'s Gaussian
+constraints are the auxiliary measurements. `upcrossings` and
+`global_significance` give the look-elsewhere correction of a mass scan
+(Gross–Vitells). CLs, the limits and the discovery p-value match pyhf
+(`tests/inference.rs`).
+
+```rust
+let cost = ModelCost::new(&hist, &signal_plus_background, &FitOptions::new().method(FitMethod::Likelihood));
+let test = HypoTest::new(cost.fitter().limit("mu", 0.0, 10.0), "mu")?;
+let limit = test.upper_limit(0.95, (0.0, 5.0))?;
+println!("μ < {:.2} (expected {:.2})", limit.observed, limit.expected[2]);
+```
+
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,
@@ -165,6 +195,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`trigger_turn_on`](crates/oxifit/examples/trigger_turn_on.rs) | A trigger efficiency turn-on fitted with an error-function model (a custom `Model` closure), and the pT where it is fully efficient |
 | [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay times — binned χ², binned likelihood and unbinned likelihood — and why a likelihood beats a χ² on sparse tails |
 | [`peak_search`](crates/oxifit/examples/peak_search.rs) | A narrow peak at an unknown mass: MIGRAD from a blind seed misses it, multistart, differential evolution and CMA-ES find it |
+| [`resonance_search`](crates/oxifit/examples/resonance_search.rs) | A complete bump hunt: background-function choice (likelihood-ratio test) and its spurious signal, local significance vs mass, the look-elsewhere correction from toy scans, the signal fit, and CLs limits with the expected band, cross-checked with toys (`--release`: a few seconds) |
 
 ## Compared with ROOT, iminuit, scipy and zfit
 

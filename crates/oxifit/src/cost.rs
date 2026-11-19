@@ -7,7 +7,9 @@ use std::sync::Arc;
 use crate::data::{FitDataNd, PointNd};
 use crate::engine::Prepared;
 use crate::model::{Constraint, Model};
-use crate::result::FitOptions;
+use crate::result::{FitMethod, FitOptions};
+use crate::rng::Rng;
+use crate::toys::Sampler;
 
 /// A fit cost: a function of named parameters whose minimum is the fit, on the
 /// scale of a χ² — `−2 ln L` for a likelihood — so that a rise of 1 above the
@@ -67,6 +69,24 @@ pub trait Cost: Send + Sync {
     fn is_gof(&self) -> bool {
         false
     }
+
+    /// The same cost on the **Asimov dataset** of `params`: the data replaced
+    /// by its expectation at those parameters, so that the fit to it returns
+    /// them exactly. The hypothesis tests use it for their asymptotic
+    /// (expected) results. `None` (the default) when the cost cannot make
+    /// one — a closure cost knows nothing of its data.
+    fn asimov(&self, params: &[f64]) -> Option<Box<dyn Cost + '_>> {
+        let _ = params;
+        None
+    }
+
+    /// The same cost on a **pseudo-dataset** drawn at `params` with the
+    /// generator seeded by `seed` — Poisson counts, or events — for toy-based
+    /// hypothesis tests. `None` (the default) when the cost cannot make one.
+    fn toy(&self, params: &[f64], seed: u64) -> Option<Box<dyn Cost + '_>> {
+        let _ = (params, seed);
+        None
+    }
 }
 
 impl<C: Cost + ?Sized> Cost for &C {
@@ -88,6 +108,12 @@ impl<C: Cost + ?Sized> Cost for &C {
     fn is_gof(&self) -> bool {
         (**self).is_gof()
     }
+    fn asimov(&self, params: &[f64]) -> Option<Box<dyn Cost + '_>> {
+        (**self).asimov(params)
+    }
+    fn toy(&self, params: &[f64], seed: u64) -> Option<Box<dyn Cost + '_>> {
+        (**self).toy(params, seed)
+    }
 }
 
 impl<C: Cost + ?Sized> Cost for Box<C> {
@@ -108,6 +134,12 @@ impl<C: Cost + ?Sized> Cost for Box<C> {
     }
     fn is_gof(&self) -> bool {
         (**self).is_gof()
+    }
+    fn asimov(&self, params: &[f64]) -> Option<Box<dyn Cost + '_>> {
+        (**self).asimov(params)
+    }
+    fn toy(&self, params: &[f64], seed: u64) -> Option<Box<dyn Cost + '_>> {
+        (**self).toy(params, seed)
     }
 }
 
@@ -330,6 +362,153 @@ impl Cost for ModelCost {
     fn is_gof(&self) -> bool {
         self.prep.gof()
     }
+    fn asimov(&self, params: &[f64]) -> Option<Box<dyn Cost + '_>> {
+        Some(Box::new(self.asimov_cost(params)))
+    }
+    fn toy(&self, params: &[f64], seed: u64) -> Option<Box<dyn Cost + '_>> {
+        Some(Box::new(self.toy_cost(params, seed)))
+    }
+}
+
+/// Cells per variable of the grid an unbinned Asimov dataset (and an N-D
+/// toy) is made on, by dimension: fine enough that the midpoint rule's error
+/// is far below any statistical one.
+const ASIMOV_CELLS: [usize; 3] = [2000, 200, 40];
+
+/// The cells of a grid over `region`: each cell's center and volume.
+fn grid(region: &[(f64, f64)]) -> (Vec<[f64; 3]>, f64) {
+    let dim = region.len();
+    let n = ASIMOV_CELLS[dim.clamp(1, 3) - 1];
+    let widths: Vec<f64> = region.iter().map(|(a, b)| (b - a) / n as f64).collect();
+    let volume: f64 = widths.iter().product();
+    let total = n.pow(dim as u32);
+    let centers = (0..total)
+        .map(|mut k| {
+            let mut c = [0.0; 3];
+            for (d, ((lo, _), w)) in region.iter().zip(&widths).enumerate() {
+                c[d] = lo + w * ((k % n) as f64 + 0.5);
+                k /= n;
+            }
+            c
+        })
+        .collect();
+    (centers, volume)
+}
+
+impl ModelCost {
+    /// The Asimov dataset's cost (see [`Cost::asimov`]). Binned data: every
+    /// point's value replaced by the model there. Unbinned: weighted events
+    /// at the centers of a fine grid over the fit region, each weighted by the
+    /// expected number of events in its cell (for the non-extended
+    /// likelihood, scaled to the data's number of events).
+    fn asimov_cost(&self, params: &[f64]) -> ModelCost {
+        let f = |c: &[f64]| (self.model.func)(c, params);
+        let dim = self.dim;
+        if !self.prep.unbinned() {
+            let pts = self
+                .points
+                .iter()
+                .map(|p| PointNd::new(p.at, f(&p.at[..dim]).max(0.0), p.sigma))
+                .collect();
+            return self.with_points(pts);
+        }
+        let (centers, volume) = grid(self.prep.region());
+        let mut pts: Vec<PointNd> = centers
+            .into_iter()
+            .map(|c| PointNd::new(c, f(&c[..dim]).max(0.0) * volume, 0.0))
+            .collect();
+        if self.prep.method() == FitMethod::UnbinnedLikelihood {
+            let total: f64 = pts.iter().map(|p| p.value).sum();
+            let scale = if total > 0.0 {
+                self.prep.sum_w() / total
+            } else {
+                0.0
+            };
+            pts.iter_mut().for_each(|p| p.value *= scale);
+        }
+        pts.retain(|p| p.value > 0.0);
+        self.with_points(pts)
+    }
+
+    /// A pseudo-dataset's cost (see [`Cost::toy`]). Binned likelihoods:
+    /// Poisson counts of mean the model; χ²: the model plus Gaussian noise of
+    /// each point's error. Unbinned: unweighted events drawn from the model
+    /// over the fit region — a Poisson number of mean `∫f` for the extended
+    /// likelihood, the data's (rounded weight sum) otherwise.
+    fn toy_cost(&self, params: &[f64], seed: u64) -> ModelCost {
+        let mut rng = Rng::stream(seed, 0);
+        let f = |c: &[f64]| (self.model.func)(c, params);
+        let dim = self.dim;
+        let method = self.prep.method();
+        if !self.prep.unbinned() {
+            let pts = self
+                .points
+                .iter()
+                .map(|p| {
+                    let mu = f(&p.at[..dim]).max(0.0);
+                    if method == FitMethod::Chi2 {
+                        PointNd::new(p.at, mu + p.sigma * rng.gauss(), p.sigma)
+                    } else {
+                        let n = rng.poisson(mu) as f64;
+                        PointNd::new(p.at, n, n.sqrt())
+                    }
+                })
+                .collect();
+            return self.with_points(pts);
+        }
+        let region = self.prep.region().to_vec();
+        let extended = method == FitMethod::ExtendedUnbinnedLikelihood;
+        let events: Vec<[f64; 3]> = if dim == 1 {
+            let (lo, hi) = region[0];
+            let sampler = Sampler::new(|x| f(&[x]), lo, hi);
+            let count = if extended {
+                rng.poisson(sampler.total) as usize
+            } else {
+                self.prep.sum_w().round() as usize
+            };
+            (0..count)
+                .map(|_| [sampler.draw(&mut rng), 0.0, 0.0])
+                .collect()
+        } else {
+            // A cell by its expected count, then uniform within it.
+            let (centers, volume) = grid(&region);
+            let n = ASIMOV_CELLS[dim - 1] as f64;
+            let half: Vec<f64> = region.iter().map(|(a, b)| 0.5 * (b - a) / n).collect();
+            let mut cdf = Vec::with_capacity(centers.len());
+            let mut acc = 0.0;
+            for c in &centers {
+                let v = f(&c[..dim]);
+                acc += if v.is_finite() {
+                    v.max(0.0) * volume
+                } else {
+                    0.0
+                };
+                cdf.push(acc);
+            }
+            let count = if extended {
+                rng.poisson(acc) as usize
+            } else {
+                self.prep.sum_w().round() as usize
+            };
+            (0..count)
+                .map(|_| {
+                    let u = rng.uniform() * acc;
+                    let k = cdf.partition_point(|&c| c < u).min(centers.len() - 1);
+                    let mut e = centers[k];
+                    for (d, h) in half.iter().enumerate() {
+                        e[d] += h * (2.0 * rng.uniform() - 1.0);
+                    }
+                    e
+                })
+                .collect()
+        };
+        self.with_points(
+            events
+                .into_iter()
+                .map(|e| PointNd::new(e, 1.0, 0.0))
+                .collect(),
+        )
+    }
 }
 
 /// A sum of costs, their parameters merged by name in order of first
@@ -433,6 +612,32 @@ impl Cost for CostSum<'_> {
     }
     fn is_gof(&self) -> bool {
         !self.terms.is_empty() && self.terms.iter().all(|(c, _)| c.is_gof())
+    }
+    fn asimov(&self, params: &[f64]) -> Option<Box<dyn Cost + '_>> {
+        let terms = self
+            .terms
+            .iter()
+            .map(|(c, map)| Some((c.asimov(&gather(params, map))?, map.clone())))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Box::new(CostSum {
+            names: self.names.clone(),
+            terms,
+        }))
+    }
+    fn toy(&self, params: &[f64], seed: u64) -> Option<Box<dyn Cost + '_>> {
+        let terms = self
+            .terms
+            .iter()
+            .enumerate()
+            .map(|(k, (c, map))| {
+                let s = Rng::stream(seed, k as u64 + 1).next_u64();
+                Some((c.toy(&gather(params, map), s)?, map.clone()))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Box::new(CostSum {
+            names: self.names.clone(),
+            terms,
+        }))
     }
 }
 

@@ -17,6 +17,26 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
   fit (`ModelCost::fitter` is exactly `fit_opts`), and `CostSum` adds costs,
   merging parameters by name — a data fit plus an external measurement, or
   several datasets with shared parameters.
+- **Hypothesis tests: discovery significance, CLs and upper limits.**
+  `HypoTest` tests a parameter of interest on any `Fitter` with the profile
+  likelihood ratio (`q₀`, `q_μ`, `q̃_μ`): `discovery` (observed and expected
+  significance), `cls` (CLs+b, CLb, CLs, expected band), `upper_limit`
+  (observed and expected −2σ…+2σ limits), all asymptotic (Cowan, Cranmer,
+  Gross, Vitells), and `cls_toys` / `discovery_toys` from pseudo-experiments
+  (parallel with `rayon`, reproducible from a seed). They match pyhf 0.8.0 to
+  1e-4 on CLs and the limits (`tests/inference.rs`). `upcrossings` and
+  `global_significance` give the look-elsewhere correction of a scan
+  (Gross–Vitells).
+- **`resonance_search` example**: a complete bump hunt on generated data —
+  the background function chosen by a likelihood-ratio test and checked for
+  spurious signal, the local significance scanned across the mass, the
+  Gross–Vitells look-elsewhere correction from toy scans, the signal fit
+  with MINOS and a profile, and CLs upper limits with the expected band,
+  one cross-checked with toys.
+- **Asimov datasets and toys from a cost**: `Cost::asimov` and `Cost::toy`,
+  implemented by `ModelCost` (binned: the expectation, Poisson or Gaussian
+  draws; unbinned: weighted events on a fine grid, events drawn from the
+  model) and `CostSum`.
 
 - **A comparison with ROOT, iminuit, scipy and zfit** (`comparison/`): the
   same data, models, seeds and costs fitted with each, with an agreement
@@ -25,6 +45,14 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 - **`tests/reference_fitters.rs`**: the binned χ² and likelihood fits of the
   comparison against ROOT 6.40 and iminuit 2.33's parameters, errors and
   minima, for both model forms and three minimizers.
+
+### Fixed
+
+- **A free parameter seeded exactly on one of its limits never moved.**
+  Minuit's limit transform is flat at a limit, so MIGRAD saw no gradient: a
+  signal strength seeded at its lower limit 0 stayed 0. The seed is now moved
+  just inside the limit (0.1 % of the range, or a tenth of the step for a
+  one-sided limit).
 
 ### Changed
 

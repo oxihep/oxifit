@@ -28,10 +28,10 @@ use crate::scan::{self, Contour, FitError, Profile, Refit};
 /// ```
 #[derive(Clone)]
 pub struct Fitter<'c> {
-    cost: &'c dyn Cost,
+    pub(crate) cost: &'c dyn Cost,
     /// The parameters as a model whose function is unused: names, seeds and
     /// per-parameter settings, with the model setters' name checking.
-    params: Model,
+    pub(crate) params: Model,
 }
 
 impl std::fmt::Debug for Fitter<'_> {

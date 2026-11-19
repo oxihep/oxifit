@@ -245,3 +245,25 @@ fn profile_and_contour_of_a_cost() {
         Err(oxifit::FitError::FixedParameter(_))
     ));
 }
+
+#[test]
+fn a_seed_on_a_limit_still_moves() {
+    // Minuit's limit transform is flat at the limit; a parameter seeded
+    // exactly there must still be fitted (a signal strength seeded at 0).
+    let cost = FnCost::new(&["mu"], |p| ((p[0] - 2.0) / 0.5).powi(2));
+    for fitter in [
+        Fitter::new(&cost, vec![0.0]).lower_limit("mu", 0.0),
+        Fitter::new(&cost, vec![0.0]).limit("mu", 0.0, 10.0),
+        Fitter::new(&cost, vec![10.0]).limit("mu", 0.0, 10.0),
+        Fitter::new(&cost, vec![5.0]).upper_limit("mu", 5.0),
+    ] {
+        let fit = fitter.fit(&FitOptions::new());
+        assert!(fit.valid && (fit.params[0] - 2.0).abs() < 1e-3, "{fit:?}");
+    }
+    // A fixed parameter on its limit stays there.
+    let fit = Fitter::new(&cost, vec![0.0])
+        .lower_limit("mu", 0.0)
+        .fix("mu")
+        .fit(&FitOptions::new());
+    assert_eq!(fit.params[0], 0.0);
+}
