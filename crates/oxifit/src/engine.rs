@@ -2,7 +2,9 @@
 //! [`FitOptions`] into a [`FitResult`]. Data-source agnostic — it only ever sees
 //! `(x, y, σ)` triples, so it fits histograms, graphs, and custom data alike.
 
-use minuit2::{MnMigrad, MnMinos};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use minuit2::{MnHesse, MnMigrad, MnMinos};
 
 use crate::data::Point;
 use crate::model::Model;
@@ -35,15 +37,7 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
     // Too few data points to determine the free parameters: report failure
     // rather than a meaningless minimum of a flat cost.
     if np == 0 || points.len() < n_free.max(1) {
-        return FitResult {
-            params: model.params.clone(),
-            errors: vec![f64::NAN; np],
-            minos: None,
-            covariance: None,
-            chi2: f64::NAN,
-            ndf: 0,
-            valid: false,
-        };
+        return failed(model);
     }
 
     let func = &model.func;
@@ -87,10 +81,31 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
     };
 
     let ndf = points.len() - n_free;
-    match opts.minimizer {
-        Minimizer::Minuit2 => minimize_minuit2(model, &cost, ndf, opts.minos),
+    // A backend may panic on a pathological point (minuit2 0.5's numerical
+    // gradient can, from a poor seed). Report that as a failed fit rather than
+    // unwinding into the caller. Nothing is shared across the boundary but the
+    // read-only model and data, so a caught panic leaves no broken state behind.
+    // The default panic hook still prints the message to stderr.
+    catch_unwind(AssertUnwindSafe(|| match opts.minimizer {
+        Minimizer::Minuit2 => minimize_minuit2(model, &cost, ndf, opts),
         #[cfg(feature = "argmin")]
         Minimizer::NelderMead => minimize_argmin(model, &cost, ndf),
+    }))
+    .unwrap_or_else(|_| failed(model))
+}
+
+/// An always-invalid result: no minimum was found (too few points, or the
+/// optimizer failed to start, converge, or panicked).
+fn failed(model: &Model) -> FitResult {
+    let np = model.params.len();
+    FitResult {
+        params: model.params.clone(),
+        errors: vec![f64::NAN; np],
+        minos: None,
+        covariance: None,
+        chi2: f64::NAN,
+        ndf: 0,
+        valid: false,
     }
 }
 
@@ -111,13 +126,15 @@ fn robust(z: f64, loss: Loss, fs2: f64) -> f64 {
     }
 }
 
-/// Minimize with the Minuit2 (MIGRAD) backend — the default. Gives parabolic
-/// errors, the free-parameter covariance, and (on request) MINOS.
+/// Minimize with the Minuit2 (MIGRAD) backend — the default — then, unless
+/// disabled, run HESSE at the minimum for the full second-derivative matrix (as
+/// ROOT's `Fit` does). Gives parabolic errors, the free-parameter covariance,
+/// and (on request) MINOS.
 fn minimize_minuit2(
     model: &Model,
     cost: &impl Fn(&[f64]) -> f64,
     ndf: usize,
-    want_minos: bool,
+    opts: &FitOptions,
 ) -> FitResult {
     let np = model.params.len();
     let mut migrad = MnMigrad::new();
@@ -136,7 +153,13 @@ fn minimize_minuit2(
             }
         };
     }
-    let min = migrad.minimize(cost);
+    let mut min = migrad.minimize(cost);
+    // MIGRAD's covariance is its variable-metric (DFP) estimate, built up along
+    // the descent; HESSE replaces it with a finite-difference Hessian at the
+    // minimum. A Hessian that is not positive-definite marks the fit invalid.
+    if opts.hesse && min.is_valid() {
+        min = MnHesse::new().calculate(cost, &min);
+    }
 
     // Read results by index (external/user space) — robust against duplicate
     // parameter names.
@@ -154,7 +177,7 @@ fn minimize_minuit2(
     // Asymmetric MINOS errors per parameter, on request and only at a valid
     // minimum. A fixed parameter is pinned, so its error is (0, 0); a free one
     // gets a likelihood scan (`lower_error` is ≤ 0, `upper_error` is ≥ 0).
-    let minos = (want_minos && min.is_valid()).then(|| {
+    let minos = (opts.minos && min.is_valid()).then(|| {
         let scan = MnMinos::new(cost, &min);
         (0..np)
             .map(|par| {
@@ -190,21 +213,6 @@ fn scatter(sub: &[f64], free: &[usize], init_full: &[f64]) -> Vec<f64> {
         full[i] = sub[k];
     }
     full
-}
-
-/// An always-invalid result (e.g. the optimizer failed to start/converge).
-#[cfg(feature = "argmin")]
-fn invalid(model: &Model) -> FitResult {
-    let np = model.params.len();
-    FitResult {
-        params: model.params.clone(),
-        errors: vec![f64::NAN; np],
-        minos: None,
-        covariance: None,
-        chi2: f64::NAN,
-        ndf: 0,
-        valid: false,
-    }
 }
 
 /// Minimize with the gradient-free Nelder–Mead simplex from the `argmin` crate.
@@ -285,16 +293,16 @@ fn minimize_argmin_capped(
     }
 
     let Ok(solver) = NelderMead::new(simplex).with_sd_tolerance(1e-10) else {
-        return invalid(model);
+        return failed(model);
     };
     let Ok(res) = Executor::new(Prob(&penalized), solver)
         .configure(|s| s.max_iters(max_iters))
         .run()
     else {
-        return invalid(model);
+        return failed(model);
     };
     let Some(best) = res.state().best_param.as_ref().cloned() else {
-        return invalid(model);
+        return failed(model);
     };
     let converged = matches!(
         res.state().get_termination_reason(),

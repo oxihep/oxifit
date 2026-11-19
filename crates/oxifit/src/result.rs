@@ -78,6 +78,13 @@ pub struct FitOptions {
     /// parabolic errors near a non-quadratic minimum, but extra work).
     /// Ignored by the [`NelderMead`](Minimizer::NelderMead) backend.
     pub minos: bool,
+    /// Run HESSE after MIGRAD (default `true`, as ROOT's `Fit` does): the
+    /// errors and covariance then come from a finite-difference Hessian at the
+    /// minimum rather than MIGRAD's running estimate. Turn off only for speed
+    /// (e.g. many toy fits where only the best-fit values matter). Ignored by
+    /// the [`NelderMead`](Minimizer::NelderMead) backend, which always computes
+    /// a numerical Hessian.
+    pub hesse: bool,
     /// Which optimizer backend to use.
     pub minimizer: Minimizer,
     /// Robust [`Loss`] applied to each squared residual (least-squares costs
@@ -95,6 +102,7 @@ impl Default for FitOptions {
             method: FitMethod::default(),
             range: None,
             minos: false,
+            hesse: true,
             minimizer: Minimizer::default(),
             loss: Loss::default(),
             f_scale: 1.0,
@@ -126,6 +134,12 @@ impl FitOptions {
         self.minos = on;
         self
     }
+    /// Run HESSE after MIGRAD (see the [`hesse`](Self::hesse) field; on by default).
+    #[must_use]
+    pub fn with_hesse(mut self, on: bool) -> FitOptions {
+        self.hesse = on;
+        self
+    }
     /// Choose the optimizer backend ([`Minimizer`]).
     #[must_use]
     pub fn minimizer(mut self, minimizer: Minimizer) -> FitOptions {
@@ -151,7 +165,8 @@ impl FitOptions {
 pub struct FitResult {
     /// Best-fit parameter values (in the model's parameter order).
     pub params: Vec<f64>,
-    /// Parabolic (Minuit2) uncertainties on each parameter.
+    /// Parabolic uncertainties on each parameter (from HESSE unless it was
+    /// turned off with [`FitOptions::with_hesse`]); `0` for a fixed parameter.
     pub errors: Vec<f64>,
     /// Asymmetric MINOS errors `(lower, upper)` per parameter (`lower ≤ 0 ≤ upper`),
     /// when requested via [`FitOptions::minos`]; `None` otherwise. A fixed

@@ -6,6 +6,33 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A fit could panic.** From some poor seeds the numerical gradient in the
+  `minuit2` 0.5 dependency calls `f64::clamp` with its bounds reversed, which
+  panics; the panic unwound through `fit`/`fit_opts` into the caller. The
+  engine now catches a panic from the minimizer and returns an invalid
+  `FitResult` (the default panic hook still prints the message).
+
+### Changed
+
+- **HESSE runs after MIGRAD by default**, as in ROOT's `Fit`: `errors` and
+  `covariance` now come from a finite-difference Hessian at the minimum rather
+  than MIGRAD's running estimate, and a minimum whose Hessian is not
+  positive-definite is reported invalid. `FitOptions::with_hesse(false)` turns
+  it off (e.g. for many toy fits where only the values matter).
+
+### Added
+
+- `erf`, `erfc` and `lgamma` (`TMath::Erf`, `TMath::Erfc`, `TMath::LnGamma`)
+  in formulas — enough for an error-function turn-on curve.
+
+### Testing
+
+- The costs against their closed forms (a constant fitted with the Poisson
+  likelihood, Neyman and Pearson χ²), exact HESSE errors of a linear fit,
+  MINOS, limits, and a recorded dataset that made the backend panic.
+
 ## [0.1.2]
 
 ### Fixed
