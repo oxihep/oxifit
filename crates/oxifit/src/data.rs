@@ -258,7 +258,13 @@ pub trait FitExt: FitDataNd {
         range: (f64, f64),
         n: usize,
     ) -> Result<Profile, FitError> {
-        scan::profile(&self.points_nd(), self.dim(), model, opts, param, range, n)
+        scan::check_dim(model, self.dim())?;
+        let data = self.points_nd();
+        let refit = scan::DataRefit {
+            data: &data,
+            dim: self.dim(),
+        };
+        scan::profile(&refit, model, opts, param, range, n)
     }
 
     /// The 2-D confidence contour of parameters `x` and `y` at `Δcost = delta`
@@ -280,15 +286,13 @@ pub trait FitExt: FitDataNd {
         delta: f64,
         npoints: usize,
     ) -> Result<Contour, FitError> {
-        scan::contour(
-            &self.points_nd(),
-            self.dim(),
-            model,
-            opts,
-            (x, y),
-            delta,
-            npoints,
-        )
+        scan::check_dim(model, self.dim())?;
+        let data = self.points_nd();
+        let refit = scan::DataRefit {
+            data: &data,
+            dim: self.dim(),
+        };
+        scan::contour(&refit, model, opts, (x, y), delta, npoints)
     }
 }
 

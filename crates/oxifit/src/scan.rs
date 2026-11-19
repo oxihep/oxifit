@@ -7,6 +7,32 @@ use crate::engine;
 use crate::model::Model;
 use crate::result::{FitOptions, FitResult, Minimizer};
 
+/// What a scan refits: a dataset, or a user's cost. `run` fits under a model's
+/// parameter settings; `value` is the cost at the model's seeds (constraints
+/// included), for a point with nothing left to fit.
+pub(crate) trait Refit: Sync {
+    fn run(&self, params: &Model, opts: &FitOptions) -> FitResult;
+    fn value(&self, params: &Model, opts: &FitOptions) -> f64;
+}
+
+/// A dataset of `dim` variables.
+pub(crate) struct DataRefit<'a> {
+    pub(crate) data: &'a [PointNd],
+    pub(crate) dim: usize,
+}
+
+impl Refit for DataRefit<'_> {
+    fn run(&self, params: &Model, opts: &FitOptions) -> FitResult {
+        engine::run_fit(self.data, self.dim, params, opts)
+    }
+    fn value(&self, params: &Model, opts: &FitOptions) -> f64 {
+        engine::with_fit(self.data, self.dim, params, opts, |fit| {
+            (fit.cost)(&fit.seed())
+        })
+        .map_or(f64::NAN, |(f, _)| f)
+    }
+}
+
 /// Why a [`profile`](crate::FitExt::profile) or
 /// [`contour`](crate::FitExt::contour) could not be computed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,7 +147,7 @@ pub struct Contour {
 }
 
 /// Data of `dim` variables fitted with a model of another dimension.
-fn check_dim(model: &Model, dim: usize) -> Result<(), FitError> {
+pub(crate) fn check_dim(model: &Model, dim: usize) -> Result<(), FitError> {
     if model.dim == dim {
         Ok(())
     } else {
@@ -134,7 +160,7 @@ fn check_dim(model: &Model, dim: usize) -> Result<(), FitError> {
 
 /// The index of free parameter `name`, or the reason it cannot be scanned
 /// (including a setter's unknown name: see [`Model::check`]).
-fn free_index(model: &Model, name: &str) -> Result<usize, FitError> {
+pub(crate) fn free_index(model: &Model, name: &str) -> Result<usize, FitError> {
     model.check()?;
     let i = model
         .param_names
@@ -150,7 +176,7 @@ fn free_index(model: &Model, name: &str) -> Result<usize, FitError> {
 /// Local refits for scan points: from the best fit, the cost alone (no HESSE
 /// or MINOS), with the combined minimizer — points far out in a profile are
 /// where MIGRAD alone fails.
-fn local_opts(opts: &FitOptions) -> FitOptions {
+pub(crate) fn local_opts(opts: &FitOptions) -> FitOptions {
     FitOptions {
         minimizer: Minimizer::Minuit2Combined,
         hesse: false,
@@ -161,9 +187,8 @@ fn local_opts(opts: &FitOptions) -> FitOptions {
 
 /// `Δcost` with the parameters in `at` fixed at their values and the other
 /// free parameters refitted from `best`; `NaN` if the refit fails.
-fn delta_at(
-    data: &[PointNd],
-    dim: usize,
+pub(crate) fn delta_at(
+    refit: &dyn Refit,
     model: &Model,
     local: &FitOptions,
     best: &FitResult,
@@ -179,20 +204,18 @@ fn delta_at(
     }
     let others_free = fixed.constraints.iter().any(|c| !c.fixed);
     let fval = if others_free {
-        let r = engine::run_fit(data, dim, &fixed, local);
+        let r = refit.run(&fixed, local);
         if r.valid { r.fval } else { f64::NAN }
     } else {
         // Nothing left to minimize: the cost at this point.
-        engine::with_fit(data, dim, &fixed, local, |fit| (fit.cost)(&fit.seed()))
-            .map_or(f64::NAN, |(f, _)| f)
+        refit.value(&fixed, local)
     };
     fval - best.fval
 }
 
 /// See [`FitExt::profile`](crate::FitExt::profile).
 pub(crate) fn profile(
-    data: &[PointNd],
-    dim: usize,
+    refit: &dyn Refit,
     model: &Model,
     opts: &FitOptions,
     param: &str,
@@ -200,8 +223,7 @@ pub(crate) fn profile(
     n: usize,
 ) -> Result<Profile, FitError> {
     let i = free_index(model, param)?;
-    check_dim(model, dim)?;
-    let best = engine::run_fit(data, dim, model, opts);
+    let best = refit.run(model, opts);
     if !best.valid {
         return Err(FitError::FitFailed);
     }
@@ -210,7 +232,7 @@ pub(crate) fn profile(
     let values: Vec<f64> = (0..n)
         .map(|k| lo + (hi - lo) * k as f64 / (n - 1) as f64)
         .collect();
-    let at = |&v: &f64| delta_at(data, dim, model, &local, &best, &[(i, v)]);
+    let at = |&v: &f64| delta_at(refit, model, &local, &best, &[(i, v)]);
     #[cfg(feature = "rayon")]
     let delta = {
         use rayon::prelude::*;
@@ -229,8 +251,7 @@ pub(crate) fn profile(
 
 /// See [`FitExt::contour`](crate::FitExt::contour).
 pub(crate) fn contour(
-    data: &[PointNd],
-    dim: usize,
+    refit: &dyn Refit,
     model: &Model,
     opts: &FitOptions,
     (x, y): (&str, &str),
@@ -239,8 +260,7 @@ pub(crate) fn contour(
 ) -> Result<Contour, FitError> {
     let ix = free_index(model, x)?;
     let iy = free_index(model, y)?;
-    check_dim(model, dim)?;
-    let best = engine::run_fit(data, dim, model, opts);
+    let best = refit.run(model, opts);
     if !best.valid || delta.is_nan() || delta <= 0.0 {
         return Err(FitError::FitFailed);
     }
@@ -276,7 +296,7 @@ pub(crate) fn contour(
         let at = |r: f64| (bx + r * dir.0, by + r * dir.1);
         let g = |r: f64| {
             let (px, py) = at(r);
-            delta_at(data, dim, model, &local, &best, &[(ix, px), (iy, py)]) - delta
+            delta_at(refit, model, &local, &best, &[(ix, px), (iy, py)]) - delta
         };
         ray_root(g, delta.sqrt()).map(at)
     };

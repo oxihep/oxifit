@@ -11,7 +11,7 @@ const CONV_INTERVALS: usize = 200;
 /// 1–3 variables. `Send + Sync` so a [`Model`] can cross thread boundaries
 /// (e.g. be shared by a parallel fit); an `Arc` so [`Model`] is cheaply `Clone`
 /// (clones share the immutable closure).
-type ModelFn = std::sync::Arc<dyn Fn(&[f64], &[f64]) -> f64 + Send + Sync>;
+pub(crate) type ModelFn = std::sync::Arc<dyn Fn(&[f64], &[f64]) -> f64 + Send + Sync>;
 
 /// A model's gradient: `g(coords, params, out)` writes `∂f/∂pₖ` into `out[k]`.
 pub(crate) type GradFn = std::sync::Arc<dyn Fn(&[f64], &[f64], &mut [f64]) + Send + Sync>;

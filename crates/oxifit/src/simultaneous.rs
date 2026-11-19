@@ -203,6 +203,7 @@ impl Simultaneous {
             residuals: &residuals,
             n_residuals: if all_res { n_points } else { 0 },
             n_points,
+            counted: true,
             gof: preps.iter().all(Prepared::gof),
             cost_w2: sumw2.then_some(&cost_w2 as CostFn<'_>),
             grad: has_grad.then_some(&grad as GradCostFn<'_>),

@@ -30,7 +30,7 @@ use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::data::PointNd;
-use crate::model::{Constraint, Model};
+use crate::model::{Constraint, GradFn, IntegralFn, Model, ModelFn};
 use crate::result::{FitMethod, FitOptions, FitResult, Loss, Minimizer};
 
 /// Points per chunk of a cost sum. The sum is taken chunk by chunk and the
@@ -154,14 +154,8 @@ fn integrate_region(f: &dyn Fn(&[f64]) -> f64, region: &[(f64, f64)]) -> f64 {
 /// A cost over the full parameter vector.
 pub(crate) type CostFn<'a> = &'a dyn Fn(&[f64]) -> f64;
 
-/// A model's gradient `∂f/∂p` at `x`, written into `out`.
-type ModelGrad = dyn Fn(&[f64], &[f64], &mut [f64]) + Send + Sync;
-
 /// A selected point: its variables (the first `dim` used), value and sigma.
 type NdPoint = ([f64; 3], f64, f64);
-
-/// A model's integral over a region at given parameters.
-type ModelIntegral = dyn Fn(&[f64], &[(f64, f64)]) -> f64 + Send + Sync;
 
 /// A cost's gradient over the full parameter vector, written into `out`.
 pub(crate) type GradCostFn<'a> = &'a dyn Fn(&[f64], &mut [f64]);
@@ -271,7 +265,7 @@ fn finish_run(model: &Model, run: Option<(FitResult, usize)>) -> FitResult {
 }
 
 /// Minimize with the chosen backend, then apply any SumW2 correction.
-fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
+pub(crate) fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
     // A backend may panic on a pathological point (minuit2 0.5's numerical
     // gradient can, from a poor seed). Report that as a failed fit rather than
     // unwinding into the caller. Nothing is shared across the boundary but the
@@ -298,11 +292,12 @@ fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
 /// One dataset's cost under its options: the selected points, the method,
 /// and (for the unbinned likelihoods) the normalization range and weight sums.
 /// Its costs are over the parameters of the model whose `func` it holds.
-pub(crate) struct Prepared<'m> {
-    func: &'m (dyn Fn(&[f64], &[f64]) -> f64 + Send + Sync),
-    grad: Option<&'m ModelGrad>,
+#[derive(Clone)]
+pub(crate) struct Prepared {
+    func: ModelFn,
+    grad: Option<GradFn>,
     /// The model's integral over a region, when known.
-    integral: Option<&'m ModelIntegral>,
+    integral: Option<IntegralFn>,
     /// The number of variables.
     dim: usize,
     /// `(at, value, sigma)`: the first `dim` entries of `at` are the variables.
@@ -317,18 +312,13 @@ pub(crate) struct Prepared<'m> {
     sum_w2: f64,
 }
 
-impl<'m> Prepared<'m> {
+impl Prepared {
     /// Select the points of `all` (of `dim` variables) that enter a fit under
     /// `opts`: those inside `opts.range` (and `range_y`, `range_z`; default:
     /// all), and for Neyman χ² only those with an error.
-    pub(crate) fn new(
-        all: &[PointNd],
-        dim: usize,
-        model: &'m Model,
-        opts: &FitOptions,
-    ) -> Prepared<'m> {
-        let func = &*model.func;
-        let grad = model.grad.as_deref();
+    pub(crate) fn new(all: &[PointNd], dim: usize, model: &Model, opts: &FitOptions) -> Prepared {
+        let func = model.func.clone();
+        let grad = model.grad.clone();
         let dim = dim.clamp(1, 3);
         let ranges = [opts.range, opts.range_y, opts.range_z];
         let drop_empty = matches!(opts.method, FitMethod::Chi2);
@@ -369,7 +359,7 @@ impl<'m> Prepared<'m> {
         Prepared {
             func,
             grad,
-            integral: model.integral.as_deref(),
+            integral: model.integral.clone(),
             dim,
             points,
             method: opts.method,
@@ -418,7 +408,7 @@ impl<'m> Prepared<'m> {
 
     /// The cost at parameters `p`.
     pub(crate) fn cost(&self, p: &[f64]) -> f64 {
-        let func = self.func;
+        let func = &*self.func;
         let dim = self.dim;
         let (loss, fs2) = (self.loss, self.fs2);
         match self.method {
@@ -453,10 +443,10 @@ impl<'m> Prepared<'m> {
     /// unbinned likelihoods the normalization's `∂(∫f)/∂p`. A no-op without
     /// a model gradient.
     pub(crate) fn add_gradient(&self, p: &[f64], out: &mut [f64]) {
-        let Some(grad) = self.grad else {
+        let Some(grad) = self.grad.as_deref() else {
             return;
         };
-        let func = self.func;
+        let func = &*self.func;
         let dim = self.dim;
         let np = p.len();
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
@@ -523,13 +513,13 @@ impl<'m> Prepared<'m> {
     /// derivative in `f` taken exactly — including its limit where the
     /// residual vanishes. A no-op without a model gradient or residuals.
     pub(crate) fn residual_jacobian(&self, p: &[f64], out: &mut [f64]) {
-        let Some(grad) = self.grad else {
+        let Some(grad) = self.grad.as_deref() else {
             return;
         };
         if self.n_residuals() == 0 {
             return;
         }
-        let func = self.func;
+        let func = &*self.func;
         let dim = self.dim;
         let np = p.len();
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
@@ -591,10 +581,10 @@ impl<'m> Prepared<'m> {
     /// globally adaptive quadrature, nested for 2-D and 3-D, so a spike-like
     /// trial shape (a width driven toward zero) costs a bounded amount.
     fn norm(&self, p: &[f64]) -> f64 {
-        if let Some(i) = self.integral {
+        if let Some(i) = self.integral.as_deref() {
             return i(p, &self.region);
         }
-        let func = self.func;
+        let func = &*self.func;
         integrate_region(&|c: &[f64]| func(c, p), &self.region)
     }
 
@@ -608,7 +598,7 @@ impl<'m> Prepared<'m> {
             down[k] -= h;
             return (self.norm(&up) - self.norm(&down)) / (2.0 * h);
         }
-        let Some(grad) = self.grad else {
+        let Some(grad) = self.grad.as_deref() else {
             return 0.0;
         };
         let np = p.len();
@@ -634,7 +624,7 @@ impl<'m> Prepared<'m> {
 
     /// `−2 ln L` with each event weighted by `w^power`.
     fn unbinned_cost(&self, p: &[f64], power: i32) -> f64 {
-        let func = self.func;
+        let func = &*self.func;
         let dim = self.dim;
         let norm = self.norm(p);
         let w = |y: f64| if power == 1 { y } else { y.powi(power) };
@@ -659,7 +649,7 @@ impl<'m> Prepared<'m> {
     /// residual √(2·[f − y + y·ln(y/f)]) for the binned likelihood. `out`
     /// holds [`n_residuals`](Self::n_residuals) values.
     pub(crate) fn residuals(&self, p: &[f64], out: &mut [f64]) {
-        let func = self.func;
+        let func = &*self.func;
         let dim = self.dim;
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
         let residual = |&(x, y, e): &NdPoint| match method {
@@ -713,6 +703,10 @@ pub(crate) struct DataTerm<'a> {
     pub(crate) n_residuals: usize,
     /// Data points entering `ndf`.
     pub(crate) n_points: usize,
+    /// Whether `n_points` counts the measurements — so a fit with fewer of
+    /// them than free parameters is refused. `false` for a user's cost that
+    /// does not say how many measurements it holds.
+    pub(crate) counted: bool,
     /// Whether the cost is a goodness-of-fit statistic.
     pub(crate) gof: bool,
     /// The cost with squared weights, when a SumW2 correction applies.
@@ -748,6 +742,7 @@ pub(crate) fn with_fit<R>(
         residuals: &residuals,
         n_residuals: prep.n_residuals(),
         n_points: prep.n_points(),
+        counted: true,
         gof: prep.gof(),
         cost_w2: (prep.unbinned() && prep.weighted() && opts.sumw2)
             .then_some(&cost_w2 as CostFn<'_>),
@@ -787,7 +782,7 @@ pub(crate) fn with_terms<R>(
 
     // Too few measurements to determine the free parameters: report failure
     // rather than a meaningless minimum of a flat cost.
-    if np == 0 || n_meas < n_free.max(1) {
+    if np == 0 || (term.counted && n_meas < n_free.max(1)) {
         return None;
     }
 
@@ -845,7 +840,7 @@ pub(crate) fn with_terms<R>(
         grad: (term.grad.is_some() && opts.gradient).then_some(&grad_fn as GradCostFn<'_>),
         jacobian: (term.jacobian.is_some() && opts.gradient && n_data_res > 0)
             .then_some(&jac_fn as GradCostFn<'_>),
-        ndf: n_meas - n_free,
+        ndf: n_meas.saturating_sub(n_free),
         opts,
         gof: term.gof,
     };
