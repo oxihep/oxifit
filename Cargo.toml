@@ -24,6 +24,7 @@ oxistats = { git = "https://github.com/oxihep/oxistats", tag = "v0.1.0", version
 minuit2 = "0.5"
 argmin = { version = "0.11", default-features = false }
 argmin-math = { version = "0.5", features = ["vec"] }
+rayon = "1"
 
 [profile.release]
 opt-level = 3

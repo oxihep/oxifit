@@ -17,12 +17,20 @@ oxistats = { workspace = true }
 oxifit-formula = { workspace = true }
 argmin = { workspace = true, optional = true }
 argmin-math = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+
+[dev-dependencies]
+rayon = { workspace = true }
 
 [features]
 # Opt-in second minimizer backend: gradient-free Nelder–Mead via the `argmin`
 # crate, selectable with `FitOptions::minimizer(Minimizer::NelderMead)`. Off by
 # default; Minuit2 (always present) is the default backend.
 argmin = ["dep:argmin", "dep:argmin-math"]
+# Evaluate costs over large datasets on all cores (chunked, with a fixed
+# summation order, so results do not depend on the number of threads), and
+# run independent fits — toys, profile points, contour rays — in parallel.
+rayon = ["dep:rayon"]
 
 [package.metadata.docs.rs]
 all-features = true

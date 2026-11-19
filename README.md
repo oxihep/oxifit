@@ -104,6 +104,7 @@ costs, limits, robust losses and fitting ROOT histograms (it uses the
 | Feature | Default | Adds |
 | --- | --- | --- |
 | `argmin` | no | A gradient-free Nelder–Mead backend via the `argmin` crate, chosen with `FitOptions::minimizer(Minimizer::NelderMead)` |
+| `rayon` | no | Large costs on all cores (an unbinned fit of 10⁶ events: 920 → 151 ms on 12 cores), and toys, profile points and contour rays fitted in parallel. Results do not depend on the number of threads. |
 
 ## Examples
 

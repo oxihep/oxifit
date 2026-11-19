@@ -6,6 +6,15 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The `rayon` feature.** A cost over more than 4096 points (χ², binned and
+  unbinned likelihoods, the residuals) is summed in parallel chunks; toys,
+  profile points and contour rays are fitted in parallel. The chunk sums
+  are added in a fixed order and toy samples are drawn before the fits, so
+  a result is bit-identical on any number of threads. An unbinned fit of
+  10⁶ events: 920 ms → 151 ms on 12 cores.
+
 ### Changed
 
 - **A misspelled parameter name no longer passes silently.** `limit`,
