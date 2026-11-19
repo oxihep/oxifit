@@ -11,8 +11,8 @@ or raw `(x, y, σ)` points. The minimizer is the pure-Rust
 
 | Crate | What it is |
 | --- | --- |
-| [`oxifit`](crates/oxifit) | The fitter: `FitData`/`FitExt`, `Model`, χ² / Poisson-likelihood costs, robust losses, Minuit2 (and an optional Nelder–Mead `argmin` backend) |
-| [`oxifit-formula`](crates/oxifit-formula) | A ROOT `TFormula` expression engine with no dependencies: parse and evaluate formula strings, numerical integral and derivative. `Model::from_formula` and oxiroot's `Func1D`/`Func2D`/`Func3D` are built on it. |
+| [`oxifit`](crates/oxifit) | The fitter: `FitData`/`FitExt`, `Model`, χ² / Poisson-likelihood costs, robust losses, Minuit2 (MIGRAD + HESSE, MINOS), global searches (multistart, differential evolution) and an optional Nelder–Mead `argmin` backend |
+| [`oxifit-formula`](crates/oxifit-formula) | A ROOT `TFormula` expression engine (its only dependency is oxistats, for `erf`/`erfc`/`lgamma`): parse and evaluate formula strings, numerical integral and derivative. `Model::from_formula` and oxiroot's `Func1D`/`Func2D`/`Func3D` are built on it. |
 
 ```toml
 [dependencies]
@@ -32,6 +32,26 @@ println!("slope = {:.3} ± {:.3}", fit.params[1], fit.errors[1]);
 Models come from a closure, a built-in shape (Gaussian, exponential,
 polynomial, Crystal Ball, Breit–Wigner, Voigt, Novosibirsk, ARGUS, …) or any
 formula string (`Model::from_formula("f", "[0]*exp(-0.5*((x-[1])/[2])^2)")`).
+
+## Minimizers
+
+`FitOptions::minimizer` picks the optimizer. Every Minuit-based choice ends with
+MIGRAD and HESSE, so values, errors, covariance and `valid` mean the same
+thing whichever one found the minimum.
+
+| `Minimizer` | What it does | When |
+| --- | --- | --- |
+| `Minuit2` (default) | MIGRAD from the model's parameters, then HESSE | A seed near the answer |
+| `Minuit2Combined` | MIGRAD, falling back to SIMPLEX when it fails (ROOT's `"Minimize"`) | MIGRAD sometimes fails to converge |
+| `Simplex` | Minuit2's SIMPLEX, then HESSE | A rough, noisy cost |
+| `MultiStart(MultiStart::new(n))` | `n` local fits from points spread over the parameter limits; the lowest wins | A few competing minima |
+| `DifferentialEvolution(…)` | A population-based global search over the limits, then MIGRAD | The seed may sit in the wrong basin (a peak of unknown position, a multimodal model) |
+| `NelderMead` (`argmin` feature) | An independent simplex with a numerical Hessian | Cross-checking Minuit2 |
+
+The global searches look inside each free parameter's limits, so set a
+`limit` on the parameters to be searched. They are seeded and reproducible.
+`FitOptions::strategy`, `tolerance` and `max_fcn` tune Minuit2, and
+`with_hesse(false)` skips HESSE when only the values matter.
 
 The [fitting guide](https://oxihep.github.io/oxiroot/guide/fitting/) covers
 costs, limits, robust losses and fitting ROOT histograms (it uses the
@@ -53,6 +73,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`resonance_fit`](crates/oxifit/examples/resonance_fit.rs) | A Z → μμ peak on a falling background: a sideband fit seeds ROOT's `gaus(0)+expo(3)`, fitted with χ² and with a Poisson likelihood, with MINOS errors |
 | [`trigger_turn_on`](crates/oxifit/examples/trigger_turn_on.rs) | A trigger efficiency turn-on fitted with an error-function model (a custom `Model` closure), and the pT where it is fully efficient |
 | [`lifetime_fit`](crates/oxifit/examples/lifetime_fit.rs) | The B⁰ lifetime from its decay-time distribution, and why a likelihood beats a χ² on sparse tails |
+| [`peak_search`](crates/oxifit/examples/peak_search.rs) | A narrow peak at an unknown mass: MIGRAD from a blind seed misses it, multistart and differential evolution find it |
 
 ## The oxihep family
 

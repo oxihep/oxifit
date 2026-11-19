@@ -43,4 +43,6 @@ pub use model::Model;
 /// The error [`Points::new`] and [`Points::unweighted`] return for inputs of
 /// different lengths (from `oxistats`).
 pub use oxistats::StatError;
-pub use result::{FitMethod, FitOptions, FitResult, Loss, Minimizer};
+pub use result::{
+    DifferentialEvolution, FitMethod, FitOptions, FitResult, Loss, Minimizer, MultiStart,
+};
