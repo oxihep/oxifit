@@ -6,6 +6,22 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`oxifit_formula::integrate` could run for hours.** It bisected depth
+  first, halving its absolute tolerance at every level. Near a narrow peak
+  that tolerance soon fell below the 15-point rule's error floor, so every
+  interval there recursed 40 levels deep, about 2⁴⁰ rules: a unit Gaussian
+  of width 0.01 on [−1, 1] never returned. A `NaN` anywhere in the integrand
+  did the same, since a `NaN` error never meets the tolerance. `integrate`
+  now uses the globally adaptive scheme of `integrate_adaptive`: it starts
+  from 16 intervals, bisects the worst one, and stops at a `1e-11` relative
+  (`1e-13` absolute) total error. Its cost is bounded at 2000 intervals,
+  about 60 000 evaluations, and a non-finite integrand returns at once. It
+  is also more accurate where the old scheme stepped over a feature:
+  ∫1/√|x| on [−1, 1] gives 4 instead of ∞. oxiroot's `Func1D` integrals,
+  checked against ROOT, are unchanged.
+
 ## [0.4.0]
 
 Unbinned and extended likelihood fits with the SumW2 correction, toy
