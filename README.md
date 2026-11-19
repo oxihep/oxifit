@@ -259,9 +259,10 @@ next to it (`cargo run -p oxifit --example <name>`):
 checks that they agree (every parameter within 0.05σ of iminuit; the binned
 fits within `10⁻⁷σ`, now a test against ROOT and iminuit). On one core oxifit
 fits binned data as fast as ROOT and 4–6× faster than iminuit, and large
-unbinned data about 2× slower than RooFit, which normalizes its shapes
-analytically; with the `rayon` feature it is the fastest of all (10⁶ events:
-0.22 s, against RooFit's 0.99 s and zfit's 0.37 s on four cores). The
+unbinned data as fast as RooFit when the model is built from its shapes
+(which, like RooFit's, carry analytic integrals: 1.1 s against 1.0 s on 10⁶
+events); with the `rayon` feature it is the fastest of all (10⁶ events:
+0.17 s, against RooFit's 1.0 s and zfit's 0.36 s on four cores). The
 comparison also covers the code each tool needs and what each does best.
 
 ## The oxihep family

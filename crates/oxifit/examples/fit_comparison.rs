@@ -58,6 +58,48 @@ fn emit(tool: &str, problem: &str, r: &FitResult, ms: f64, repeats: usize) {
     );
 }
 
+/// The built-in parametrization `(A, μ, σ, c0, c1)` as the comparison's
+/// `(Nₛ, μ, σ, N_b, λ)`, errors propagated through the covariance.
+fn to_yields(r: &FitResult) -> FitResult {
+    let map = |p: &[f64]| -> Vec<f64> {
+        let lambda = -p[4];
+        vec![
+            p[0] * p[2] * std::f64::consts::TAU.sqrt(),
+            p[1],
+            p[2],
+            p[3].exp() * (1.0 - (-lambda * HI).exp()) / lambda,
+            lambda,
+        ]
+    };
+    let mut out = r.clone();
+    out.params = map(&r.params);
+    if let Some(cov) = &r.covariance {
+        // A numerical Jacobian of the map (every parameter is free here).
+        let jac: Vec<Vec<f64>> = (0..5)
+            .map(|k| {
+                let h = 1e-6 * r.params[k].abs().max(1e-3);
+                let (mut up, mut down) = (r.params.clone(), r.params.clone());
+                up[k] += h;
+                down[k] -= h;
+                let (a, b) = (map(&up), map(&down));
+                (0..5).map(|i| (a[i] - b[i]) / (2.0 * h)).collect()
+            })
+            .collect();
+        out.errors = (0..5)
+            .map(|i| {
+                let mut v = 0.0;
+                for a in 0..5 {
+                    for b in 0..5 {
+                        v += jac[a][i] * cov[a][b] * jac[b][i];
+                    }
+                }
+                v.sqrt()
+            })
+            .collect();
+    }
+    out
+}
+
 fn main() {
     let dir = std::env::args()
         .nth(1)
@@ -129,11 +171,26 @@ fn main() {
             let dnorm = HI * (-l * HI).exp();
             g[4] = p[3] * ((-l * x).exp() * (1.0 - l * x) / norm - e * dnorm / norm);
         });
+        // The same density from built-in shapes — a Gaussian of amplitude
+        // A = Ns/(σ√2π) and exp(c0 + c1·x) — which carry analytic gradients
+        // and integrals: no numerical normalization at all.
+        let amplitude = seed[0] / (seed[2] * std::f64::consts::TAU.sqrt());
+        let c0 = (seed[3] * seed[4] / (1.0 - (-seed[4] * HI).exp())).ln();
+        let builtin = (Model::gaussian("sig") + Model::exponential("bkg"))
+            .with_params(vec![amplitude, seed[1], seed[2], c0, -seed[4]])
+            .lower_limit("sig.sigma", 0.01);
         let opts = FitOptions::new()
             .method(FitMethod::ExtendedUnbinnedLikelihood)
             .range(LO, HI);
-        for (variant, model) in [("closure", &plain), ("gradient", &with_grad)] {
-            let (r, ms) = timed(repeats, || events.fit_opts(model, &opts));
+        for (variant, model) in [
+            ("closure", &plain),
+            ("gradient", &with_grad),
+            ("builtin", &builtin),
+        ] {
+            let (mut r, ms) = timed(repeats, || events.fit_opts(model, &opts));
+            if variant == "builtin" {
+                r = to_yields(&r);
+            }
             emit(
                 &format!("oxifit-{variant}{tag}"),
                 &format!("unbinned_{file}"),
