@@ -6,6 +6,8 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.4.1]
+
 ### Fixed
 
 - **`oxifit_formula::integrate` could run for hours.** It bisected depth
