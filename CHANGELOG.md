@@ -8,6 +8,19 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Bin-integrated binned fits** (ROOT's option `"I"`):
+  `FitOptions::with_bin_integration` compares each bin with the model
+  averaged over it (its known integral, else 8-point Gauss–Legendre), for the
+  χ², Pearson and Poisson-likelihood costs of 1-D data. Bins come from
+  `FitData::bin_edges` (`Points::with_bin_edges`) or halfway between
+  centers. Matches ROOT 6.40's `"I"` and `"LI"` fits to 0.01σ
+  (`tests/bins_efficiency.rs`).
+- **Binomial efficiency fits**: `Efficiency` (pass/total per bin, or single
+  pass/fail events) and its `BinomialCost` (a `Cost` with Asimov data and
+  toys), the likelihood of ROOT's `TEfficiency::Fit`, which it matches.
+- **`tag_and_probe` example**: a trigger efficiency from simultaneous
+  pass/fail fits, its turn-on, and binomial against χ² on toys.
+
 - **sWeights** (sPlot, Pivk and Le Diberder): `SWeights::compute` from the
   species' shapes in a discriminating variable and their fitted yields, with
   the yields' covariance. The weights sum to the yields and, at the extended

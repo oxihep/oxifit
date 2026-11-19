@@ -333,6 +333,14 @@ pub struct FitOptions {
     /// the unbinned likelihoods of a single dataset (MINOS errors are not
     /// corrected).
     pub asymptotic: bool,
+    /// For binned fits of 1-D data (χ², Pearson, Poisson likelihood): compare
+    /// each bin with the model **averaged over the bin** rather than its value
+    /// at the bin center — ROOT's option `"I"`, iminuit's `BinnedNLL`. It
+    /// matters where the model curves within a bin (wide bins, narrow
+    /// peaks). The bins are the data's [`bin_edges`](crate::FitData::bin_edges)
+    /// when it has them, else halfway between neighbouring centers (exact for
+    /// uniform binning). Default `false`.
+    pub integrate: bool,
     /// Use the model's analytic gradient ([`Model::with_gradient`](crate::Model::with_gradient))
     /// when it has one (default `true`): MIGRAD takes exact cost derivatives,
     /// Levenberg–Marquardt an exact Jacobian, L-BFGS-B exact gradients. Turn
@@ -369,6 +377,7 @@ impl Default for FitOptions {
             hesse: true,
             sumw2: false,
             asymptotic: false,
+            integrate: false,
             gradient: true,
             minimizer: Minimizer::default(),
             strategy: 1,
@@ -434,6 +443,13 @@ impl FitOptions {
     #[must_use]
     pub fn with_asymptotic_errors(mut self, on: bool) -> FitOptions {
         self.asymptotic = on;
+        self
+    }
+    /// Average the model over each bin in binned fits (see the
+    /// [`integrate`](Self::integrate) field).
+    #[must_use]
+    pub fn with_bin_integration(mut self, on: bool) -> FitOptions {
+        self.integrate = on;
         self
     }
     /// Use the model's analytic gradient when it has one (see the

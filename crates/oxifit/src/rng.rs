@@ -39,6 +39,23 @@ impl Rng {
         (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }
 
+    /// A binomial draw of `n` trials of probability `p`: counted for up to a
+    /// few hundred trials, else from the normal approximation (rounded and
+    /// clamped), which is then far below any statistical effect.
+    pub(crate) fn binomial(&mut self, n: u64, p: f64) -> u64 {
+        if n == 0 || p.is_nan() || p <= 0.0 {
+            return 0;
+        }
+        if p >= 1.0 {
+            return n;
+        }
+        if n <= 500 {
+            return (0..n).filter(|_| self.uniform() < p).count() as u64;
+        }
+        let (mean, sd) = (n as f64 * p, (n as f64 * p * (1.0 - p)).sqrt());
+        (mean + sd * self.gauss()).round().clamp(0.0, n as f64) as u64
+    }
+
     /// A Poisson draw of mean `lambda` (`0` for a non-positive or `NaN` mean):
     /// Knuth's product of uniforms below 10, Hörmann's transformed rejection
     /// (PTRS, 1993) above — exact at any mean, in O(1) for large ones.
