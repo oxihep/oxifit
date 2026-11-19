@@ -48,8 +48,8 @@ thing whichever one found the minimum.
 
 | `Minimizer` | What it does | When |
 | --- | --- | --- |
-| `Minuit2` (default) | MIGRAD from the model's parameters, then HESSE | A seed near the answer |
-| `Minuit2Combined` | MIGRAD, falling back to SIMPLEX when it fails (ROOT's `"Minimize"`) | MIGRAD sometimes fails to converge |
+| `Minuit2Combined` (default) | MIGRAD, falling back to SIMPLEX (then MIGRAD again) when it fails — ROOT's `"Minimize"` | Every fit: same cost as MIGRAD when MIGRAD succeeds |
+| `Minuit2` | MIGRAD alone, then HESSE (ROOT's `"Migrad"`) | Matching ROOT's default exactly |
 | `Simplex` | Minuit2's SIMPLEX, then HESSE | A rough, noisy cost |
 | `MultiStart(MultiStart::new(n))` | `n` local fits from points spread over the parameter limits; the lowest wins | A few competing minima |
 | `DifferentialEvolution(…)` | A population-based global search over the limits, then MIGRAD | The seed may sit in the wrong basin (a peak of unknown position, a multimodal model) |

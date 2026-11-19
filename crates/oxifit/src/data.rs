@@ -227,7 +227,7 @@ pub trait FitExt: FitDataNd {
 
     /// The profile of the cost in parameter `param`: fit once (per `opts`),
     /// then step `param` over `n` values evenly spaced across `range`, refitting
-    /// the other parameters (MIGRAD from the best fit) at each, and report
+    /// the other parameters (from the best fit) at each, and report
     /// `Δcost` against the minimum. [`Profile::interval`] reads off the 1σ
     /// (`Δ = 1`) or 2σ (`Δ = 4`) interval, valid where the cost is not
     /// parabolic. Costs `n` fits.

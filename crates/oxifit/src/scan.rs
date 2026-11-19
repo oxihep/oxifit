@@ -147,11 +147,12 @@ fn free_index(model: &Model, name: &str) -> Result<usize, FitError> {
     Ok(i)
 }
 
-/// Local refits for scan points: MIGRAD from the best fit, the cost alone (no
-/// HESSE or MINOS).
+/// Local refits for scan points: from the best fit, the cost alone (no HESSE
+/// or MINOS), with the combined minimizer — points far out in a profile are
+/// where MIGRAD alone fails.
 fn local_opts(opts: &FitOptions) -> FitOptions {
     FitOptions {
-        minimizer: Minimizer::Minuit2,
+        minimizer: Minimizer::Minuit2Combined,
         hesse: false,
         minos: false,
         ..*opts

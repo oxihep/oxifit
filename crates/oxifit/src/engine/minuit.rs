@@ -2,9 +2,7 @@
 //! [`finish`] — HESSE, MINOS, and the [`FitResult`] — which every
 //! Minuit-polished backend, the global searches included, ends with.
 
-use minuit2::{
-    FCN, FCNGradient, FunctionMinimum, MnHesse, MnMigrad, MnMinimize, MnMinos, MnSimplex,
-};
+use minuit2::{FCN, FCNGradient, FunctionMinimum, MnHesse, MnMigrad, MnMinos, MnSimplex};
 
 use super::Fit;
 use crate::result::FitResult;
@@ -64,7 +62,7 @@ macro_rules! builder {
         }
     )*};
 }
-builder!(MnMigrad, MnMinimize, MnSimplex);
+builder!(MnMigrad, MnSimplex);
 
 /// Declare the model's parameters to a Minuit2 front end, starting from
 /// `start` (a full parameter vector), with the fit's strategy, tolerance and
@@ -137,7 +135,18 @@ pub(crate) fn local(fit: &Fit, start: &[f64], how: Local) -> FunctionMinimum {
                 None => migrad.minimize(cost),
             }
         }
-        Local::Combined => configure(MnMinimize::new(), fit, start).minimize(cost),
+        // MIGRAD, then on failure SIMPLEX and MIGRAD again from its point —
+        // minuit2's `MnMinimize` logic, but with each MIGRAD using the
+        // analytic gradient when the fit has one (`MnMinimize` would not).
+        Local::Combined => {
+            let first = local(fit, start, Local::Migrad);
+            if first.is_valid() {
+                return first;
+            }
+            let simplex = local(fit, start, Local::Simplex);
+            let again = local(fit, &simplex.params(), Local::Migrad);
+            if again.is_valid() { again } else { simplex }
+        }
         Local::Simplex => configure(MnSimplex::new(), fit, start).minimize(cost),
     }
 }
