@@ -18,7 +18,7 @@ mod cmaes;
 mod global;
 mod linalg;
 mod lm;
-mod minuit;
+pub(crate) mod minuit;
 #[cfg(feature = "argmin")]
 mod nelder_mead;
 
@@ -89,6 +89,46 @@ impl Fit<'_> {
 /// `x` in `opts.range` (default: all); Neyman chi-square additionally drops
 /// points with no usable error (`sigma <= 0`).
 pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitResult {
+    let run = |fit: &Fit| {
+        // A backend may panic on a pathological point (minuit2 0.5's numerical
+        // gradient can, from a poor seed). Report that as a failed fit rather
+        // than unwinding into the caller. Nothing is shared across the
+        // boundary but the read-only model and data, so a caught panic leaves
+        // no broken state behind. The default panic hook still prints the
+        // message to stderr.
+        catch_unwind(AssertUnwindSafe(|| match opts.minimizer {
+            Minimizer::Minuit2 => minuit::run(fit, minuit::Local::Migrad),
+            Minimizer::Minuit2Combined => minuit::run(fit, minuit::Local::Combined),
+            Minimizer::Simplex => minuit::run(fit, minuit::Local::Simplex),
+            Minimizer::MultiStart(cfg) => global::multi_start(fit, cfg),
+            Minimizer::DifferentialEvolution(cfg) => global::differential_evolution(fit, cfg),
+            Minimizer::CmaEs(cfg) => cmaes::cma_es(fit, cfg),
+            Minimizer::LevenbergMarquardt => lm::levenberg_marquardt(fit),
+            #[cfg(feature = "argmin")]
+            Minimizer::NelderMead => nelder_mead::minimize(fit),
+        }))
+        .unwrap_or_else(|_| failed(model))
+    };
+    match with_fit(all, model, opts, run) {
+        Some((mut result, calls)) => {
+            result.nfcn = calls;
+            result
+        }
+        None => failed(model),
+    }
+}
+
+/// Build the [`Fit`] for `model` on `all` under `opts` — the selected points,
+/// the cost and residuals (with any Gaussian constraints), `ndf` — and run
+/// `body` on it. Returns `body`'s result and the number of cost evaluations it
+/// made, or `None` when there are too few measurements to determine the free
+/// parameters.
+pub(crate) fn with_fit<R>(
+    all: &[Point],
+    model: &Model,
+    opts: &FitOptions,
+    body: impl FnOnce(&Fit) -> R,
+) -> Option<(R, usize)> {
     let np = model.params.len();
     // Neyman chi-square uses only points with an error; the others use every one.
     let drop_empty = matches!(opts.method, FitMethod::Chi2);
@@ -125,7 +165,7 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
     // Too few measurements to determine the free parameters: report failure
     // rather than a meaningless minimum of a flat cost.
     if np == 0 || n_meas < n_free.max(1) {
-        return failed(model);
+        return None;
     }
 
     let func = &model.func;
@@ -223,25 +263,8 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
         gof: matches!(opts.method, FitMethod::Likelihood) || opts.loss == Loss::Linear,
     };
 
-    // A backend may panic on a pathological point (minuit2 0.5's numerical
-    // gradient can, from a poor seed). Report that as a failed fit rather than
-    // unwinding into the caller. Nothing is shared across the boundary but the
-    // read-only model and data, so a caught panic leaves no broken state behind.
-    // The default panic hook still prints the message to stderr.
-    let mut result = catch_unwind(AssertUnwindSafe(|| match opts.minimizer {
-        Minimizer::Minuit2 => minuit::run(&fit, minuit::Local::Migrad),
-        Minimizer::Minuit2Combined => minuit::run(&fit, minuit::Local::Combined),
-        Minimizer::Simplex => minuit::run(&fit, minuit::Local::Simplex),
-        Minimizer::MultiStart(cfg) => global::multi_start(&fit, cfg),
-        Minimizer::DifferentialEvolution(cfg) => global::differential_evolution(&fit, cfg),
-        Minimizer::CmaEs(cfg) => cmaes::cma_es(&fit, cfg),
-        Minimizer::LevenbergMarquardt => lm::levenberg_marquardt(&fit),
-        #[cfg(feature = "argmin")]
-        Minimizer::NelderMead => nelder_mead::minimize(&fit),
-    }))
-    .unwrap_or_else(|_| failed(model));
-    result.nfcn = calls.get();
-    result
+    let result = body(&fit);
+    Some((result, calls.get()))
 }
 
 /// An always-invalid result: no minimum was found (too few points, or the

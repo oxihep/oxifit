@@ -8,6 +8,17 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Profiles and contours.** `FitExt::profile` scans the cost in one
+  parameter, refitting the others at each value; `Profile::interval(level)`
+  gives the `Δ = level` interval (1σ at 1, 2σ at 4) from the scan.
+  `FitExt::contour` traces the 2-D region where the profiled cost is `Δ`
+  above its minimum (2.30 for a 68 % joint region, 5.99 for 95 %), each point
+  found along a ray from the minimum with the other parameters refitted.
+  (minuit2 0.5's `MnContours` does not re-minimize at its starting points,
+  so it misplaces contours of correlated parameters; oxifit does not use it.)
+- **`FitError`**, the error type of the scans: an unknown or fixed
+  parameter, or a failed fit.
+
 - **Sum models.** `Model::sum("m", &[&sig, &bkg])`, or `sig + bkg`, adds
   models term by term. Parameters are named after their part (`sig.mean`,
   `bkg.slope`; a repeated part name is numbered, `g_2.mean`), and each part
