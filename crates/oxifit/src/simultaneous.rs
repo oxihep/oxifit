@@ -2,7 +2,7 @@
 //! its own model and cost, fitted together with the parameters they share.
 
 use crate::data::{FitData, Point};
-use crate::engine::{self, CostFn, DataTerm, Prepared};
+use crate::engine::{self, CostFn, DataTerm, GradCostFn, Prepared};
 use crate::model::{Constraint, Model};
 use crate::result::{FitOptions, FitResult};
 
@@ -131,7 +131,7 @@ impl Simultaneous {
         let preps: Vec<Prepared> = self
             .channels
             .iter()
-            .map(|ch| Prepared::new(&ch.points, &*ch.model.func, &ch.opts))
+            .map(|ch| Prepared::new(&ch.points, &ch.model, &ch.opts))
             .collect();
         let gather = |p: &[f64], map: &[usize]| map.iter().map(|&g| p[g]).collect::<Vec<f64>>();
         let cost = |p: &[f64]| {
@@ -159,6 +159,35 @@ impl Simultaneous {
                 .sum::<f64>()
         };
         let sumw2 = opts.sumw2 && preps.iter().any(|p| p.unbinned() && p.weighted());
+        // The joint gradient: each channel's, scattered onto the shared
+        // parameters (a shared parameter collects every channel's term).
+        let grad = |p: &[f64], out: &mut [f64]| {
+            for (prep, map) in preps.iter().zip(&maps) {
+                let mut g = vec![0.0; map.len()];
+                prep.add_gradient(&gather(p, map), &mut g);
+                for (&gi, v) in map.iter().zip(g) {
+                    out[gi] += v;
+                }
+            }
+        };
+        let has_grad = preps.iter().all(Prepared::has_gradient);
+        // The joint Jacobian: each channel's rows, its columns scattered onto
+        // the shared parameters.
+        let np = model.params.len();
+        let jac = |p: &[f64], out: &mut [f64]| {
+            let mut row0 = 0;
+            for (prep, map) in preps.iter().zip(&maps) {
+                let n = prep.n_residuals();
+                let mut local = vec![0.0; n * map.len()];
+                prep.residual_jacobian(&gather(p, map), &mut local);
+                for r in 0..n {
+                    for (c, &gi) in map.iter().enumerate() {
+                        out[(row0 + r) * np + gi] += local[r * map.len() + c];
+                    }
+                }
+                row0 += n;
+            }
+        };
         let n_points: usize = preps.iter().map(Prepared::n_points).sum();
         let term = DataTerm {
             cost: &cost,
@@ -167,6 +196,8 @@ impl Simultaneous {
             n_points,
             gof: preps.iter().all(Prepared::gof),
             cost_w2: sumw2.then_some(&cost_w2 as CostFn<'_>),
+            grad: has_grad.then_some(&grad as GradCostFn<'_>),
+            jacobian: (has_grad && all_res).then_some(&jac as GradCostFn<'_>),
         };
         engine::run_terms(&model, opts, &term)
     }
@@ -181,7 +212,7 @@ impl Simultaneous {
             .iter()
             .zip(&maps)
             .map(|(ch, map)| {
-                let prep = Prepared::new(&ch.points, &*ch.model.func, &ch.opts);
+                let prep = Prepared::new(&ch.points, &ch.model, &ch.opts);
                 let p: Vec<f64> = map.iter().map(|&g| result.params[g]).collect();
                 (ch.name.clone(), prep.cost(&p), prep.n_points())
             })

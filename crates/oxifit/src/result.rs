@@ -87,6 +87,12 @@ pub enum Minimizer {
     /// MIGRAD + HESSE. A local method like MIGRAD — `scipy.optimize.curve_fit`'s
     /// default — that often needs fewer evaluations on least-squares fits.
     LevenbergMarquardt,
+    /// L-BFGS-B from the model's seed: a limited-memory quasi-Newton method
+    /// with bounds (SciPy's and zfit's gradient minimizer), here in projected
+    /// form, then MIGRAD + HESSE. It pays off with an analytic gradient
+    /// ([`Model::with_gradient`](crate::Model::with_gradient)) and many
+    /// parameters; without one it uses central differences.
+    LBfgsB,
     /// Gradient-free Nelder–Mead simplex via the
     /// [`argmin`](https://crates.io/crates/argmin) crate (requires the `argmin`
     /// feature). It moves in Minuit's internal coordinates, so limits hold
@@ -308,6 +314,11 @@ pub struct FitOptions {
     /// events. Default `false`; applies to the unbinned likelihoods (MINOS
     /// errors are not corrected).
     pub sumw2: bool,
+    /// Use the model's analytic gradient ([`Model::with_gradient`](crate::Model::with_gradient))
+    /// when it has one (default `true`): MIGRAD takes exact cost derivatives,
+    /// Levenberg–Marquardt an exact Jacobian, L-BFGS-B exact gradients. Turn
+    /// off to compare with finite differences.
+    pub gradient: bool,
     /// Minuit2 strategy: `0` (fast, fewer derivative calls), `1` (default),
     /// `2` (careful: more accurate derivatives and covariance, slower) — ROOT's
     /// `SetStrategy`. Applies to MIGRAD, HESSE and MINOS.
@@ -336,6 +347,7 @@ impl Default for FitOptions {
             minos: false,
             hesse: true,
             sumw2: false,
+            gradient: true,
             minimizer: Minimizer::default(),
             strategy: 1,
             tolerance: 0.1,
@@ -381,6 +393,13 @@ impl FitOptions {
     #[must_use]
     pub fn with_sumw2(mut self, on: bool) -> FitOptions {
         self.sumw2 = on;
+        self
+    }
+    /// Use the model's analytic gradient when it has one (see the
+    /// [`gradient`](Self::gradient) field; on by default).
+    #[must_use]
+    pub fn with_gradient(mut self, on: bool) -> FitOptions {
+        self.gradient = on;
         self
     }
     /// Choose the optimizer backend ([`Minimizer`]).

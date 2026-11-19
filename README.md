@@ -52,12 +52,24 @@ thing whichever one found the minimum.
 | `DifferentialEvolution(…)` | A population-based global search over the limits, then MIGRAD | The seed may sit in the wrong basin (a peak of unknown position, a multimodal model) |
 | `CmaEs(CmaEs::new())` | CMA-ES: an evolution strategy that learns the valley's shape, then MIGRAD | As above, usually in a third of the evaluations; copes with correlated parameters |
 | `LevenbergMarquardt` | Damped Gauss–Newton on the residuals, then MIGRAD | A good seed: fewer evaluations than MIGRAD on least-squares and likelihood fits |
+| `LBfgsB` | Limited-memory quasi-Newton within the limits, then MIGRAD | Many parameters, with an analytic gradient |
 | `NelderMead` (`argmin` feature) | An independent simplex with a numerical Hessian | Cross-checking Minuit2 |
 
 The global searches look inside each free parameter's limits, so set a
 `limit` on the parameters to be searched. They are seeded and reproducible.
 `FitOptions::strategy`, `tolerance` and `max_fcn` tune Minuit2, and
 `with_hesse(false)` skips HESSE when only the values matter.
+
+## Analytic gradients
+
+`Model::with_gradient(|x, p, g| …)` gives a model its derivatives `∂f/∂p`
+(the Gaussian, exponential and polynomial shapes have theirs built in; a sum
+has one when every part does; `check_gradient` compares with finite
+differences). Every cost then has an exact gradient: MIGRAD,
+Levenberg–Marquardt and L-BFGS-B use it, and the error matrix comes from it in
+`2n` gradient calls instead of HESSE's `~2n²` cost calls — a 30-parameter fit
+of ten peaks runs in 149 ms instead of 186 ms (126 ms with L-BFGS-B).
+`FitOptions::with_gradient(false)` turns it off.
 
 ## Unbinned fits
 

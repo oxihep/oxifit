@@ -39,6 +39,7 @@ fn every_minuit_backend_agrees_on_a_line() {
         Minimizer::Minuit2Combined,
         Minimizer::Simplex,
         Minimizer::LevenbergMarquardt,
+        Minimizer::LBfgsB,
     ];
     backends.extend(global());
     for m in backends {

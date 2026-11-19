@@ -9,6 +9,9 @@ use crate::data::{FitData, Point};
 /// cheaply `Clone` (clones share the immutable closure).
 type ModelFn = std::sync::Arc<dyn Fn(f64, &[f64]) -> f64 + Send + Sync>;
 
+/// A model's gradient: `g(x, params, out)` writes `∂f/∂pₖ` into `out[k]`.
+pub(crate) type GradFn = std::sync::Arc<dyn Fn(f64, &[f64], &mut [f64]) + Send + Sync>;
+
 /// Optional fit constraints on one parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct Constraint {
@@ -35,6 +38,9 @@ pub struct Model {
     /// Per-parameter constraints (limits / fixed / step), one per parameter.
     pub(crate) constraints: Vec<Constraint>,
     pub(crate) func: ModelFn,
+    /// The analytic gradient `∂f/∂p`, when known
+    /// ([`with_gradient`](Model::with_gradient)).
+    pub(crate) grad: Option<GradFn>,
     /// For a sum ([`Model::sum`]): its parts' names, in order, so `+` can
     /// append to it rather than nest it.
     pub(crate) parts: Option<Vec<String>>,
@@ -59,6 +65,7 @@ impl Model {
             params,
             constraints,
             func: std::sync::Arc::new(func),
+            grad: None,
             parts: None,
             unknown: Vec::new(),
         }
@@ -213,6 +220,7 @@ impl Model {
             params: Vec::new(),
             constraints: Vec::new(),
             func: std::sync::Arc::new(|_, _| 0.0),
+            grad: Some(std::sync::Arc::new(|_, _, _| {})),
             parts: Some(Vec::new()),
             unknown: Vec::new(),
         };
@@ -255,6 +263,14 @@ impl Model {
         self.func = std::sync::Arc::new(move |x, p| {
             head(x, &p[..offset]) + tail(x, &p[offset..offset + n])
         });
+        // The sum has a gradient when every part does.
+        self.grad = match (self.grad.take(), part.grad.clone()) {
+            (Some(gh), Some(gt)) => Some(std::sync::Arc::new(move |x, p, out: &mut [f64]| {
+                gh(x, &p[..offset], &mut out[..offset]);
+                gt(x, &p[offset..offset + n], &mut out[offset..offset + n]);
+            })),
+            _ => None,
+        };
         self
     }
 
@@ -272,12 +288,25 @@ impl Model {
                 p[0] * (-0.5 * ((x - p[1]) / s).powi(2)).exp()
             },
         )
+        .with_gradient(|x, p, g| {
+            let s = if p[2] == 0.0 { f64::EPSILON } else { p[2] };
+            let u = (x - p[1]) / s;
+            let e = (-0.5 * u * u).exp();
+            g[0] = e;
+            g[1] = p[0] * e * u / s;
+            g[2] = p[0] * e * u * u / s;
+        })
     }
 
     /// An exponential `exp([0] + [1]·x)` (ROOT's `"expo"`).
     pub fn exponential(name: &str) -> Model {
         Model::new(name, &["constant", "slope"], vec![0.0, -1.0], |x, p| {
             (p[0] + p[1] * x).exp()
+        })
+        .with_gradient(|x, p, g| {
+            let e = (p[0] + p[1] * x).exp();
+            g[0] = e;
+            g[1] = e * x;
         })
     }
 
@@ -287,6 +316,13 @@ impl Model {
         let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
         Model::new(name, &name_refs, vec![0.0; degree + 1], |x, p| {
             p.iter().rev().fold(0.0, |acc, &c| acc * x + c)
+        })
+        .with_gradient(|x, _p, g| {
+            let mut xk = 1.0;
+            for gk in g.iter_mut() {
+                *gk = xk;
+                xk *= x;
+            }
         })
     }
 
@@ -402,6 +438,95 @@ impl Model {
     #[must_use]
     pub fn eval(&self, x: f64) -> f64 {
         (self.func)(x, &self.params)
+    }
+
+    /// Give the model its analytic gradient: `grad(x, params, out)` writes
+    /// `∂f(x; params)/∂pₖ` into `out[k]` for every parameter (`out` is zeroed
+    /// before each call). The fit then uses exact derivatives of the cost:
+    /// MIGRAD's steps (falling back to finite differences if it stalls far
+    /// from the minimum), Levenberg–Marquardt's Jacobian,
+    /// [`Minimizer::LBfgsB`](crate::Minimizer::LBfgsB), and the error matrix —
+    /// a central difference of the gradient, `2n` gradient calls instead of
+    /// HESSE's `~2n²` cost calls, which is where models with many parameters
+    /// gain most. The Gaussian,
+    /// exponential and polynomial shapes have theirs built in, and a sum of
+    /// models has one when every part does. Verify a hand-written gradient
+    /// with [`check_gradient`](Self::check_gradient).
+    ///
+    /// ```
+    /// # use oxifit::Model;
+    /// let line = Model::new("line", &["a", "b"], vec![1.0, 2.0], |x, p| p[0] + p[1] * x)
+    ///     .with_gradient(|x, _p, g| {
+    ///         g[0] = 1.0;
+    ///         g[1] = x;
+    ///     });
+    /// assert!(line.check_gradient(&[0.0, 1.5, 3.0]) < 1e-8);
+    /// ```
+    #[must_use]
+    pub fn with_gradient(
+        mut self,
+        grad: impl Fn(f64, &[f64], &mut [f64]) + Send + Sync + 'static,
+    ) -> Model {
+        self.grad = Some(std::sync::Arc::new(grad));
+        self
+    }
+
+    /// Whether the model has an analytic gradient.
+    #[must_use]
+    pub fn has_gradient(&self) -> bool {
+        self.grad.is_some()
+    }
+
+    /// The gradient `∂f/∂p` at `x` with the current parameters: analytic when
+    /// the model has one, else a central difference.
+    #[must_use]
+    pub fn gradient(&self, x: f64) -> Vec<f64> {
+        let mut out = vec![0.0; self.params.len()];
+        match &self.grad {
+            Some(g) => g(x, &self.params, &mut out),
+            None => out = self.numerical_gradient(x),
+        }
+        out
+    }
+
+    /// `∂f/∂p` at `x` by central differences (step `1e-6·max(|p|, 1)`).
+    fn numerical_gradient(&self, x: f64) -> Vec<f64> {
+        let mut p = self.params.clone();
+        (0..p.len())
+            .map(|k| {
+                let h = 1e-6 * p[k].abs().max(1.0);
+                let v = p[k];
+                p[k] = v + h;
+                let up = (self.func)(x, &p);
+                p[k] = v - h;
+                let down = (self.func)(x, &p);
+                p[k] = v;
+                (up - down) / (2.0 * h)
+            })
+            .collect()
+    }
+
+    /// The largest disagreement between the model's analytic gradient and a
+    /// central difference over the points `xs`, at the current parameters —
+    /// relative to the larger of the two (or absolute below 1): about `1e-8`
+    /// for a correct gradient. `NaN` when the model has no gradient.
+    #[must_use]
+    pub fn check_gradient(&self, xs: &[f64]) -> f64 {
+        let Some(g) = &self.grad else {
+            return f64::NAN;
+        };
+        let mut out = vec![0.0; self.params.len()];
+        xs.iter()
+            .flat_map(|&x| {
+                out.iter_mut().for_each(|o| *o = 0.0);
+                g(x, &self.params, &mut out);
+                let num = self.numerical_gradient(x);
+                out.iter()
+                    .zip(num)
+                    .map(|(&a, n)| (a - n).abs() / a.abs().max(n.abs()).max(1.0))
+                    .collect::<Vec<_>>()
+            })
+            .fold(0.0, f64::max)
     }
 
     /// Whether the model's first three parameters are the Gaussian-core triple
