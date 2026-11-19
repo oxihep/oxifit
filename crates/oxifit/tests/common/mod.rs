@@ -1,4 +1,6 @@
 //! Shared fixtures for the integration tests.
+// Each test binary uses only some of these.
+#![allow(dead_code)]
 
 use oxifit::{Model, Point, Points};
 
