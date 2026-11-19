@@ -196,7 +196,7 @@ impl FitData for [Point] {
 /// impl, so `data.fit(&model)` works for a `Hist1D`, a `Graph`, or [`Points`]
 /// alike. Bring it into scope (`use oxifit::FitExt;`, or the `oxiroot`
 /// prelude) to call these.
-pub trait FitExt: FitData {
+pub trait FitExt: FitDataNd {
     /// Fit `model` by chi-square minimization over the full range (ROOT's
     /// default `Fit`) — shorthand for [`fit_opts`](Self::fit_opts) with the
     /// default [`FitOptions`]. To pick a different cost, a range, or a robust
@@ -213,7 +213,7 @@ pub trait FitExt: FitData {
     /// `FitResult::chi2` is the cost at the minimum.
     #[must_use]
     fn fit_opts(&self, model: &Model, opts: &FitOptions) -> FitResult {
-        run_fit(&self.points(), model, opts)
+        run_fit(&self.points_nd(), self.dim(), model, opts)
     }
 
     /// Fit `model` (per `opts`) and write the best-fit parameters back into it,
@@ -258,7 +258,7 @@ pub trait FitExt: FitData {
         range: (f64, f64),
         n: usize,
     ) -> Result<Profile, FitError> {
-        scan::profile(&self.points(), model, opts, param, range, n)
+        scan::profile(&self.points_nd(), self.dim(), model, opts, param, range, n)
     }
 
     /// The 2-D confidence contour of parameters `x` and `y` at `Δcost = delta`
@@ -280,11 +280,263 @@ pub trait FitExt: FitData {
         delta: f64,
         npoints: usize,
     ) -> Result<Contour, FitError> {
-        scan::contour(&self.points(), model, opts, (x, y), delta, npoints)
+        scan::contour(
+            &self.points_nd(),
+            self.dim(),
+            model,
+            opts,
+            (x, y),
+            delta,
+            npoints,
+        )
     }
 }
 
-impl<T: FitData + ?Sized> FitExt for T {}
+impl<T: FitDataNd + ?Sized> FitExt for T {}
+
+/// A data point in one to three dimensions: the variables `at` (unused
+/// trailing entries are 0), a value, and its uncertainty — as
+/// [`Point`] for 1-D data. For unbinned events the value is the weight and
+/// `sigma` is unused.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointNd {
+    /// The variables: `[x, y, z]`, the first [`FitDataNd::dim`] of them used.
+    pub at: [f64; 3],
+    /// The measured value at `at` (an event's weight for unbinned data).
+    pub value: f64,
+    /// The uncertainty on `value`; `<= 0` means "no usable error".
+    pub sigma: f64,
+}
+
+impl PointNd {
+    /// A point of `dim` variables: the first `dim` entries of `at` are used.
+    #[must_use]
+    pub fn new(at: [f64; 3], value: f64, sigma: f64) -> PointNd {
+        PointNd { at, value, sigma }
+    }
+}
+
+/// A dataset of one to three variables a model of the same dimension can be
+/// fitted to — 2-D and 3-D histograms ([`Points2`], [`Points3`]) and events
+/// ([`Events2`], [`Events3`]), and every 1-D [`FitData`] (by a blanket
+/// implementation). The [`FitExt`] methods (`fit`, `fit_opts`, `profile`, …)
+/// work on all of them; the model's [`dim`](Model::dim) must match the data's.
+pub trait FitDataNd {
+    /// The number of variables, 1–3.
+    fn dim(&self) -> usize;
+    /// The data as points.
+    fn points_nd(&self) -> Vec<PointNd>;
+}
+
+impl<T: FitData + ?Sized> FitDataNd for T {
+    fn dim(&self) -> usize {
+        1
+    }
+    fn points_nd(&self) -> Vec<PointNd> {
+        self.points()
+            .into_iter()
+            .map(|p| PointNd::new([p.x, 0.0, 0.0], p.y, p.sigma))
+            .collect()
+    }
+}
+
+/// 2-D data: values with uncertainties at points `(x, y)` — the bins of a 2-D
+/// histogram (centers, contents, errors), or measurements on a grid.
+///
+/// ```
+/// # use oxifit::{FitExt, Model, Points2};
+/// let x = [0.0, 1.0, 0.0, 1.0];
+/// let y = [0.0, 0.0, 1.0, 1.0];
+/// let v = [1.0, 3.0, 4.0, 6.0]; // 1 + 2x + 3y
+/// let data = Points2::new(&x, &y, &v, &[0.1; 4])?;
+/// let plane = Model::new2("plane", &["a", "b", "c"], vec![0.0; 3], |x, y, p| p[0] + p[1] * x + p[2] * y);
+/// let fit = data.fit(&plane);
+/// assert!(fit.valid && (fit.params[2] - 3.0).abs() < 1e-6);
+/// # Ok::<(), oxifit::StatError>(())
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Points2 {
+    points: Vec<PointNd>,
+}
+
+impl Points2 {
+    /// Build from parallel `x`, `y`, `value` and `sigma` slices.
+    ///
+    /// # Errors
+    /// [`StatError::LengthMismatch`] if a slice is not as long as `x`.
+    pub fn new(x: &[f64], y: &[f64], value: &[f64], sigma: &[f64]) -> Result<Points2, StatError> {
+        for n in [y.len(), value.len(), sigma.len()] {
+            paired(x.len(), n)?;
+        }
+        let points = (0..x.len())
+            .map(|i| PointNd::new([x[i], y[i], 0.0], value[i], sigma[i]))
+            .collect();
+        Ok(Points2 { points })
+    }
+
+    /// Build directly from points (their first two variables are used).
+    #[must_use]
+    pub fn from_points(points: Vec<PointNd>) -> Points2 {
+        Points2 { points }
+    }
+}
+
+impl FitDataNd for Points2 {
+    fn dim(&self) -> usize {
+        2
+    }
+    fn points_nd(&self) -> Vec<PointNd> {
+        self.points.clone()
+    }
+}
+
+/// 3-D data: values with uncertainties at points `(x, y, z)` — the bins of a
+/// 3-D histogram, or measurements on a grid.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Points3 {
+    points: Vec<PointNd>,
+}
+
+impl Points3 {
+    /// Build from parallel `x`, `y`, `z`, `value` and `sigma` slices.
+    ///
+    /// # Errors
+    /// [`StatError::LengthMismatch`] if a slice is not as long as `x`.
+    pub fn new(
+        x: &[f64],
+        y: &[f64],
+        z: &[f64],
+        value: &[f64],
+        sigma: &[f64],
+    ) -> Result<Points3, StatError> {
+        for n in [y.len(), z.len(), value.len(), sigma.len()] {
+            paired(x.len(), n)?;
+        }
+        let points = (0..x.len())
+            .map(|i| PointNd::new([x[i], y[i], z[i]], value[i], sigma[i]))
+            .collect();
+        Ok(Points3 { points })
+    }
+
+    /// Build directly from points.
+    #[must_use]
+    pub fn from_points(points: Vec<PointNd>) -> Points3 {
+        Points3 { points }
+    }
+}
+
+impl FitDataNd for Points3 {
+    fn dim(&self) -> usize {
+        3
+    }
+    fn points_nd(&self) -> Vec<PointNd> {
+        self.points.clone()
+    }
+}
+
+/// Unbinned 2-D data: events at `(x, y)`, optionally weighted — for the
+/// unbinned likelihoods with a 2-D model (normalized over the fit region,
+/// [`FitOptions::range`](crate::FitOptions::range) and
+/// [`range_y`](crate::FitOptions::range_y)).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Events2 {
+    points: Vec<PointNd>,
+}
+
+impl Events2 {
+    /// Unweighted events at `(x[i], y[i])`.
+    ///
+    /// # Errors
+    /// [`StatError::LengthMismatch`] if `y` is not as long as `x`.
+    pub fn new(x: &[f64], y: &[f64]) -> Result<Events2, StatError> {
+        Events2::weighted(x, y, &vec![1.0; x.len()])
+    }
+
+    /// Weighted events.
+    ///
+    /// # Errors
+    /// [`StatError::LengthMismatch`] if `y` or `w` is not as long as `x`.
+    pub fn weighted(x: &[f64], y: &[f64], w: &[f64]) -> Result<Events2, StatError> {
+        paired(x.len(), y.len())?;
+        paired(x.len(), w.len())?;
+        let points = (0..x.len())
+            .map(|i| PointNd::new([x[i], y[i], 0.0], w[i], 0.0))
+            .collect();
+        Ok(Events2 { points })
+    }
+
+    /// The number of events.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+
+    /// Whether there are no events.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+}
+
+impl FitDataNd for Events2 {
+    fn dim(&self) -> usize {
+        2
+    }
+    fn points_nd(&self) -> Vec<PointNd> {
+        self.points.clone()
+    }
+}
+
+/// Unbinned 3-D data: events at `(x, y, z)`, optionally weighted.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Events3 {
+    points: Vec<PointNd>,
+}
+
+impl Events3 {
+    /// Unweighted events at `(x[i], y[i], z[i])`.
+    ///
+    /// # Errors
+    /// [`StatError::LengthMismatch`] if `y` or `z` is not as long as `x`.
+    pub fn new(x: &[f64], y: &[f64], z: &[f64]) -> Result<Events3, StatError> {
+        Events3::weighted(x, y, z, &vec![1.0; x.len()])
+    }
+
+    /// Weighted events.
+    ///
+    /// # Errors
+    /// [`StatError::LengthMismatch`] if a slice is not as long as `x`.
+    pub fn weighted(x: &[f64], y: &[f64], z: &[f64], w: &[f64]) -> Result<Events3, StatError> {
+        for n in [y.len(), z.len(), w.len()] {
+            paired(x.len(), n)?;
+        }
+        let points = (0..x.len())
+            .map(|i| PointNd::new([x[i], y[i], z[i]], w[i], 0.0))
+            .collect();
+        Ok(Events3 { points })
+    }
+
+    /// The number of events.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+
+    /// Whether there are no events.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+}
+
+impl FitDataNd for Events3 {
+    fn dim(&self) -> usize {
+        3
+    }
+    fn points_nd(&self) -> Vec<PointNd> {
+        self.points.clone()
+    }
+}
 
 /// Reject paired inputs whose lengths differ.
 fn paired(left: usize, right: usize) -> Result<(), StatError> {

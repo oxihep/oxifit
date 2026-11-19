@@ -29,7 +29,7 @@ mod transform;
 use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::data::Point;
+use crate::data::PointNd;
 use crate::model::{Constraint, Model};
 use crate::result::{FitMethod, FitOptions, FitResult, Loss, Minimizer};
 
@@ -105,14 +105,63 @@ fn robust_slope(z: f64, loss: Loss, fs2: f64) -> f64 {
     }
 }
 
-/// The most intervals the unbinned normalization integral may use.
+/// The most intervals the unbinned normalization integral may use (1-D; each
+/// level of a nested 2-D or 3-D one uses [`NESTED_INTERVALS`]).
 const NORM_INTERVALS: usize = 200;
+
+/// The most intervals each level of a nested 2-D / 3-D integral may use.
+const NESTED_INTERVALS: usize = 48;
+
+/// `∫ f` over a region of 1–3 variables (one `(lo, hi)` each): bounded,
+/// globally adaptive Gauss–Kronrod, nested for 2-D and 3-D.
+fn integrate_region(f: &dyn Fn(&[f64]) -> f64, region: &[(f64, f64)]) -> f64 {
+    use oxifit_formula::integrate_adaptive as quad;
+    match *region {
+        [(a, b)] => quad(|x| f(&[x]), a, b, 1e-10, NORM_INTERVALS).0,
+        [(a, b), (c, d)] => {
+            quad(
+                |x| quad(|y| f(&[x, y]), c, d, 1e-9, NESTED_INTERVALS).0,
+                a,
+                b,
+                1e-9,
+                NESTED_INTERVALS,
+            )
+            .0
+        }
+        [(a, b), (c, d), (e, g)] => {
+            quad(
+                |x| {
+                    quad(
+                        |y| quad(|z| f(&[x, y, z]), e, g, 1e-8, NESTED_INTERVALS).0,
+                        c,
+                        d,
+                        1e-8,
+                        NESTED_INTERVALS,
+                    )
+                    .0
+                },
+                a,
+                b,
+                1e-8,
+                NESTED_INTERVALS,
+            )
+            .0
+        }
+        _ => f64::NAN,
+    }
+}
 
 /// A cost over the full parameter vector.
 pub(crate) type CostFn<'a> = &'a dyn Fn(&[f64]) -> f64;
 
 /// A model's gradient `∂f/∂p` at `x`, written into `out`.
-type ModelGrad = dyn Fn(f64, &[f64], &mut [f64]) + Send + Sync;
+type ModelGrad = dyn Fn(&[f64], &[f64], &mut [f64]) + Send + Sync;
+
+/// A selected point: its variables (the first `dim` used), value and sigma.
+type NdPoint = ([f64; 3], f64, f64);
+
+/// A model's integral over a region at given parameters.
+type ModelIntegral = dyn Fn(&[f64], &[(f64, f64)]) -> f64 + Send + Sync;
 
 /// A cost's gradient over the full parameter vector, written into `out`.
 pub(crate) type GradCostFn<'a> = &'a dyn Fn(&[f64], &mut [f64]);
@@ -186,13 +235,16 @@ impl Fit<'_> {
 /// Fit `model` to `all` under `opts`. The points entering the fit are those with
 /// `x` in `opts.range` (default: all); Neyman chi-square additionally drops
 /// points with no usable error (`sigma <= 0`).
-pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitResult {
-    // A setter given a name the model does not have: not the fit that was
-    // asked for (`Model::check` says which name).
-    if model.check().is_err() {
+pub(crate) fn run_fit(all: &[PointNd], dim: usize, model: &Model, opts: &FitOptions) -> FitResult {
+    // A setter given a name the model does not have, or data of another
+    // dimension: not the fit that was asked for (`Model::check` says why).
+    if model.check().is_err() || dim != model.dim {
         return failed(model);
     }
-    finish_run(model, with_fit(all, model, opts, |fit| dispatch(fit, opts)))
+    finish_run(
+        model,
+        with_fit(all, dim, model, opts, |fit| dispatch(fit, opts)),
+    )
 }
 
 /// Fit `model` to a prepared data term (a simultaneous fit's combined cost).
@@ -245,47 +297,65 @@ fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
 /// and (for the unbinned likelihoods) the normalization range and weight sums.
 /// Its costs are over the parameters of the model whose `func` it holds.
 pub(crate) struct Prepared<'m> {
-    func: &'m (dyn Fn(f64, &[f64]) -> f64 + Send + Sync),
+    func: &'m (dyn Fn(&[f64], &[f64]) -> f64 + Send + Sync),
     grad: Option<&'m ModelGrad>,
-    points: Vec<(f64, f64, f64)>,
+    /// The model's integral over a region, when known.
+    integral: Option<&'m ModelIntegral>,
+    /// The number of variables.
+    dim: usize,
+    /// `(at, value, sigma)`: the first `dim` entries of `at` are the variables.
+    points: Vec<NdPoint>,
     method: FitMethod,
     loss: Loss,
     /// Robust-loss residual scale squared.
     fs2: f64,
-    /// The unbinned normalization range.
-    range: (f64, f64),
+    /// The unbinned normalization region, one `(lo, hi)` per variable.
+    region: Vec<(f64, f64)>,
     sum_w: f64,
     sum_w2: f64,
 }
 
 impl<'m> Prepared<'m> {
-    /// Select the points of `all` that enter a fit under `opts`: those with `x`
-    /// in `opts.range` (default: all), and for Neyman χ² only those with an
-    /// error.
-    pub(crate) fn new(all: &[Point], model: &'m Model, opts: &FitOptions) -> Prepared<'m> {
+    /// Select the points of `all` (of `dim` variables) that enter a fit under
+    /// `opts`: those inside `opts.range` (and `range_y`, `range_z`; default:
+    /// all), and for Neyman χ² only those with an error.
+    pub(crate) fn new(
+        all: &[PointNd],
+        dim: usize,
+        model: &'m Model,
+        opts: &FitOptions,
+    ) -> Prepared<'m> {
         let func = &*model.func;
         let grad = model.grad.as_deref();
+        let dim = dim.clamp(1, 3);
+        let ranges = [opts.range, opts.range_y, opts.range_z];
         let drop_empty = matches!(opts.method, FitMethod::Chi2);
-        let points: Vec<(f64, f64, f64)> = all
+        let points: Vec<NdPoint> = all
             .iter()
             .filter_map(|p| {
-                if let Some((lo, hi)) = opts.range
-                    && (p.x < lo || p.x > hi)
-                {
-                    return None;
+                for (k, r) in ranges.iter().enumerate().take(dim) {
+                    if let Some((lo, hi)) = r
+                        && (p.at[k] < *lo || p.at[k] > *hi)
+                    {
+                        return None;
+                    }
                 }
-                (!drop_empty || p.sigma > 0.0).then_some((p.x, p.y, p.sigma))
+                (!drop_empty || p.sigma > 0.0).then_some((p.at, p.value, p.sigma))
             })
             .collect();
-        // The unbinned likelihoods normalize over the fit range: the given
-        // one, else the span of the events.
-        let range = opts.range.unwrap_or_else(|| {
-            points
-                .iter()
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
-                    (a.min(p.0), b.max(p.0))
+        // The unbinned likelihoods normalize over the fit region: the given
+        // ranges, else the span of the events in each variable.
+        let region: Vec<(f64, f64)> = (0..dim)
+            .map(|k| {
+                ranges[k].unwrap_or_else(|| {
+                    points
+                        .iter()
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
+                            (a.min(p.0[k]), b.max(p.0[k]))
+                        })
                 })
-        });
+            })
+            .collect();
         let (sum_w, sum_w2) = points
             .iter()
             .fold((0.0, 0.0), |(a, b), p| (a + p.1, b + p.1 * p.1));
@@ -297,11 +367,13 @@ impl<'m> Prepared<'m> {
         Prepared {
             func,
             grad,
+            integral: model.integral.as_deref(),
+            dim,
             points,
             method: opts.method,
             loss: opts.loss,
             fs2: fs * fs,
-            range,
+            region,
             sum_w,
             sum_w2,
         }
@@ -345,19 +417,20 @@ impl<'m> Prepared<'m> {
     /// The cost at parameters `p`.
     pub(crate) fn cost(&self, p: &[f64]) -> f64 {
         let func = self.func;
+        let dim = self.dim;
         let (loss, fs2) = (self.loss, self.fs2);
         match self.method {
             FitMethod::Chi2 => chunked_sum(&self.points, |&(x, y, e)| {
-                let d = (y - func(x, p)) / e;
+                let d = (y - func(&x[..dim], p)) / e;
                 robust(d * d, loss, fs2)
             }),
             FitMethod::PearsonChi2 => chunked_sum(&self.points, |&(x, y, _)| {
-                let f = func(x, p).max(1e-300); // expected (model) variance
+                let f = func(&x[..dim], p).max(1e-300); // expected (model) variance
                 robust((y - f) * (y - f) / f, loss, fs2)
             }),
             FitMethod::Likelihood => {
                 2.0 * chunked_sum(&self.points, |&(x, y, _)| {
-                    let f = func(x, p).max(1e-300);
+                    let f = func(&x[..dim], p).max(1e-300);
                     if y > 0.0 { f - y + y * (y / f).ln() } else { f }
                 })
             }
@@ -382,11 +455,12 @@ impl<'m> Prepared<'m> {
             return;
         };
         let func = self.func;
+        let dim = self.dim;
         let np = p.len();
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
         // d(cost term)/df at a point (0 where the model was clamped).
-        let slope = |x: f64, y: f64, e: f64| -> f64 {
-            let raw = func(x, p);
+        let slope = |x: [f64; 3], y: f64, e: f64| -> f64 {
+            let raw = func(&x[..dim], p);
             match method {
                 FitMethod::Chi2 => {
                     let d = (y - raw) / e;
@@ -420,7 +494,7 @@ impl<'m> Prepared<'m> {
                 let c = slope(x, y, e);
                 if c != 0.0 {
                     g.iter_mut().for_each(|v| *v = 0.0);
-                    grad(x, p, g);
+                    grad(&x[..dim], p, g);
                     for (a, gk) in acc.iter_mut().zip(g.iter()) {
                         *a += c * gk;
                     }
@@ -430,25 +504,10 @@ impl<'m> Prepared<'m> {
         );
         if self.unbinned() {
             // The normalization N = ∫f and its gradient ∂N/∂pₖ = ∫∂f/∂pₖ.
-            let (lo, hi) = self.range;
-            let norm =
-                oxifit_formula::integrate_adaptive(|x| func(x, p), lo, hi, 1e-10, NORM_INTERVALS).0;
-            let g = std::cell::RefCell::new(vec![0.0; np]);
-            for k in 0..np {
-                let dn = oxifit_formula::integrate_adaptive(
-                    |x| {
-                        let mut g = g.borrow_mut();
-                        g.iter_mut().for_each(|v| *v = 0.0);
-                        grad(x, p, &mut g);
-                        g[k]
-                    },
-                    lo,
-                    hi,
-                    1e-10,
-                    NORM_INTERVALS,
-                )
-                .0;
-                out[k] += if self.method == FitMethod::ExtendedUnbinnedLikelihood {
+            let norm = self.norm(p);
+            for (k, o) in out.iter_mut().enumerate().take(np) {
+                let dn = self.norm_grad(p, k);
+                *o += if self.method == FitMethod::ExtendedUnbinnedLikelihood {
                     2.0 * dn
                 } else {
                     2.0 * self.sum_w * dn / norm.max(1e-300)
@@ -469,6 +528,7 @@ impl<'m> Prepared<'m> {
             return;
         }
         let func = self.func;
+        let dim = self.dim;
         let np = p.len();
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
         // dr/dd for r = sign(d)·√ρ(d²): ρ'(d²)·|d|/√ρ(d²), → 1 as d → 0.
@@ -480,8 +540,8 @@ impl<'m> Prepared<'m> {
                 robust_slope(d * d, loss, fs2) * d.abs() / rho.sqrt()
             }
         };
-        let dr_df = |x: f64, y: f64, e: f64| -> f64 {
-            let raw = func(x, p);
+        let dr_df = |x: [f64; 3], y: f64, e: f64| -> f64 {
+            let raw = func(&x[..dim], p);
             match method {
                 FitMethod::Chi2 => -robust_dr((y - raw) / e) / e,
                 FitMethod::PearsonChi2 => {
@@ -517,11 +577,47 @@ impl<'m> Prepared<'m> {
         for (row, &(x, y, e)) in out.chunks_mut(np).zip(&self.points) {
             let c = dr_df(x, y, e);
             g.iter_mut().for_each(|v| *v = 0.0);
-            grad(x, p, &mut g);
+            grad(&x[..dim], p, &mut g);
             for (o, gk) in row.iter_mut().zip(&g) {
                 *o = c * gk;
             }
         }
+    }
+
+    /// The model's integral over the fit region at `p`: its known integral
+    /// when it has one (products, sums of them), else numerical — bounded,
+    /// globally adaptive quadrature, nested for 2-D and 3-D, so a spike-like
+    /// trial shape (a width driven toward zero) costs a bounded amount.
+    fn norm(&self, p: &[f64]) -> f64 {
+        if let Some(i) = self.integral {
+            return i(p, &self.region);
+        }
+        let func = self.func;
+        integrate_region(&|c: &[f64]| func(c, p), &self.region)
+    }
+
+    /// `∂N/∂pₖ` of the normalization: a central difference of a known
+    /// integral, else the integral of the model gradient's `k`-th component.
+    fn norm_grad(&self, p: &[f64], k: usize) -> f64 {
+        if self.integral.is_some() {
+            let h = 1e-6 * p[k].abs().max(1.0);
+            let (mut up, mut down) = (p.to_vec(), p.to_vec());
+            up[k] += h;
+            down[k] -= h;
+            return (self.norm(&up) - self.norm(&down)) / (2.0 * h);
+        }
+        let Some(grad) = self.grad else {
+            return 0.0;
+        };
+        let np = p.len();
+        integrate_region(
+            &|c: &[f64]| {
+                let mut g = vec![0.0; np];
+                grad(c, p, &mut g);
+                g[k]
+            },
+            &self.region,
+        )
     }
 
     /// For the SumW2 sandwich: the unbinned cost with squared weights (whose
@@ -537,14 +633,11 @@ impl<'m> Prepared<'m> {
     /// `−2 ln L` with each event weighted by `w^power`.
     fn unbinned_cost(&self, p: &[f64], power: i32) -> f64 {
         let func = self.func;
-        let (lo, hi) = self.range;
-        // Bounded, globally adaptive quadrature: a spike-like trial shape (a
-        // width driven toward zero) costs at most NORM_INTERVALS splits.
-        let norm =
-            oxifit_formula::integrate_adaptive(|x| func(x, p), lo, hi, 1e-10, NORM_INTERVALS).0;
+        let dim = self.dim;
+        let norm = self.norm(p);
         let w = |y: f64| if power == 1 { y } else { y.powi(power) };
         let logs = chunked_sum(&self.points, |&(x, y, _)| {
-            w(y) * func(x, p).max(1e-300).ln()
+            w(y) * func(&x[..dim], p).max(1e-300).ln()
         });
         if self.method == FitMethod::ExtendedUnbinnedLikelihood {
             let scale = if power == 1 || self.sum_w == 0.0 {
@@ -565,19 +658,20 @@ impl<'m> Prepared<'m> {
     /// holds [`n_residuals`](Self::n_residuals) values.
     pub(crate) fn residuals(&self, p: &[f64], out: &mut [f64]) {
         let func = self.func;
+        let dim = self.dim;
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
-        let residual = |&(x, y, e): &(f64, f64, f64)| match method {
+        let residual = |&(x, y, e): &NdPoint| match method {
             FitMethod::Chi2 => {
-                let d = (y - func(x, p)) / e;
+                let d = (y - func(&x[..dim], p)) / e;
                 robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
             }
             FitMethod::PearsonChi2 => {
-                let f = func(x, p).max(1e-300);
+                let f = func(&x[..dim], p).max(1e-300);
                 let d = (y - f) / f.sqrt();
                 robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
             }
             FitMethod::Likelihood => {
-                let f = func(x, p).max(1e-300);
+                let f = func(&x[..dim], p).max(1e-300);
                 let t = if y > 0.0 { f - y + y * (y / f).ln() } else { f };
                 (2.0 * t).max(0.0).sqrt().copysign(f - y)
             }
@@ -585,7 +679,7 @@ impl<'m> Prepared<'m> {
             FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood => 0.0,
         };
         let n = self.points.len().min(out.len());
-        let fill = |(o, pts): (&mut [f64], &[(f64, f64, f64)])| {
+        let fill = |(o, pts): (&mut [f64], &[NdPoint])| {
             for (o, pt) in o.iter_mut().zip(pts) {
                 *o = residual(pt);
             }
@@ -635,12 +729,13 @@ pub(crate) struct DataTerm<'a> {
 /// made, or `None` when there are too few measurements to determine the free
 /// parameters.
 pub(crate) fn with_fit<R>(
-    all: &[Point],
+    all: &[PointNd],
+    dim: usize,
     model: &Model,
     opts: &FitOptions,
     body: impl FnOnce(&Fit) -> R,
 ) -> Option<(R, usize)> {
-    let prep = Prepared::new(all, model, opts);
+    let prep = Prepared::new(all, dim, model, opts);
     let cost = |p: &[f64]| prep.cost(p);
     let residuals = |p: &[f64], out: &mut [f64]| prep.residuals(p, out);
     let cost_w2 = |p: &[f64]| prep.cost_w2(p);
@@ -839,16 +934,16 @@ fn robust(z: f64, loss: Loss, fs2: f64) -> f64 {
 #[cfg(test)]
 mod gradient_tests {
     use super::*;
-    use crate::data::Point;
+    use crate::data::PointNd;
 
     /// Every cost's analytic gradient matches a central difference of the cost.
     #[test]
     fn cost_gradients_match_finite_differences() {
-        let pts: Vec<Point> = (0..60)
+        let pts: Vec<PointNd> = (0..60)
             .map(|i| {
                 let x = -3.0 + 0.1 * f64::from(i);
                 let y = (40.0 * (-0.5 * ((x - 0.3) / 0.8f64).powi(2)).exp() + 5.0).round();
-                Point::new(x, y, y.sqrt().max(1.0))
+                PointNd::new([x, 0.0, 0.0], y, y.sqrt().max(1.0))
             })
             .collect();
         let model = (Model::gaussian("g") + Model::polynomial("c", 0))
@@ -863,7 +958,7 @@ mod gradient_tests {
         ] {
             for loss in [Loss::Linear, Loss::Cauchy] {
                 let opts = FitOptions::new().method(method).loss(loss).range(-3.0, 3.0);
-                with_fit(&pts, &model, &opts, |fit| {
+                with_fit(&pts, 1, &model, &opts, |fit| {
                     let grad = fit.grad.expect("the model has a gradient");
                     let p = model.params.clone();
                     let mut g = vec![0.0; p.len()];
@@ -887,16 +982,16 @@ mod gradient_tests {
 #[cfg(test)]
 mod jacobian_tests {
     use super::*;
-    use crate::data::Point;
+    use crate::data::PointNd;
 
     /// The residuals' exact Jacobian matches a central difference.
     #[test]
     fn residual_jacobians_match_finite_differences() {
-        let pts: Vec<Point> = (0..40)
+        let pts: Vec<PointNd> = (0..40)
             .map(|i| {
                 let x = -2.0 + 0.1 * f64::from(i);
                 let y = (30.0 * (-0.5 * ((x - 0.2) / 0.7f64).powi(2)).exp() + 4.0).round();
-                Point::new(x, y, y.sqrt().max(1.0))
+                PointNd::new([x, 0.0, 0.0], y, y.sqrt().max(1.0))
             })
             .collect();
         let model = (Model::gaussian("g") + Model::polynomial("c", 0))
@@ -909,7 +1004,7 @@ mod jacobian_tests {
         ] {
             for loss in [Loss::Linear, Loss::SoftL1] {
                 let opts = FitOptions::new().method(method).loss(loss);
-                with_fit(&pts, &model, &opts, |fit| {
+                with_fit(&pts, 1, &model, &opts, |fit| {
                     let jac = fit.jacobian.expect("an analytic Jacobian");
                     let (n, p) = (fit.n_residuals, model.params.clone());
                     let np = p.len();
