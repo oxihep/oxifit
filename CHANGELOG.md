@@ -8,6 +8,22 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **Analytic integrals for the built-in shapes** (normal, Gaussian,
+  exponential, polynomial, Crystal Ball, double-sided Crystal Ball,
+  Breit–Wigner), and `Model::with_integral` / `Model::integral` for any
+  model. Unbinned fits normalize with them and bin-integrated fits average
+  with them, instead of quadrature; sums and products inherit them. They match
+  adaptive quadrature to 1e-9 over every piece of each shape
+  (`tests/integrals.rs`). The comparison's 10⁶-event fit with built-in shapes
+  takes 1.1 s on one core — level with RooFit (1.0 s), half a closure's time.
+- **A sum's parts are normalized separately**: a part without a known
+  integral gets its own numerical one, remembered for its last parameters,
+  so a minimizer step in one part's parameters integrates only that part.
+- **Exact gradients for formula models**: `Formula::derivative` (in
+  oxifit-formula) differentiates a formula symbolically, and
+  `Model::from_formula` attaches the gradient (`tests/derivative.rs` checks
+  every supported function against finite differences).
+
 - **Bin-integrated binned fits** (ROOT's option `"I"`):
   `FitOptions::with_bin_integration` compares each bin with the model
   averaged over it (its known integral, else 8-point Gauss–Legendre), for the

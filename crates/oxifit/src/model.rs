@@ -67,6 +67,144 @@ pub struct Model {
     pub(crate) integral: Option<IntegralFn>,
 }
 
+/// A model's numerical integral over a region, remembered for the last
+/// parameters and region it was asked for (shared by clones of the model;
+/// thread-safe, so parallel fits only lose hits).
+fn remembered_integral(func: ModelFn) -> IntegralFn {
+    type Memo = Option<(Vec<f64>, Vec<(f64, f64)>, f64)>;
+    let memo: std::sync::Arc<std::sync::Mutex<Memo>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    std::sync::Arc::new(move |p: &[f64], region: &[(f64, f64)]| {
+        if let Ok(m) = memo.lock()
+            && let Some((mp, mr, v)) = m.as_ref()
+            && mp.as_slice() == p
+            && mr.as_slice() == region
+        {
+            return *v;
+        }
+        let v = crate::engine::integrate_region(&|x: &[f64]| func(x, p), region);
+        if let Ok(mut m) = memo.lock() {
+            *m = Some((p.to_vec(), region.to_vec(), v));
+        }
+        v
+    })
+}
+
+/// `Φ(b) − Φ(a)` of the standard normal, without cancellation in the tails.
+fn normal_mass(a: f64, b: f64) -> f64 {
+    let r = std::f64::consts::FRAC_1_SQRT_2;
+    if a >= 0.0 {
+        0.5 * (oxistats::erfc(a * r) - oxistats::erfc(b * r))
+    } else if b <= 0.0 {
+        0.5 * (oxistats::erfc(-b * r) - oxistats::erfc(-a * r))
+    } else {
+        0.5 * (oxistats::erf(b * r) - oxistats::erf(a * r))
+    }
+}
+
+/// `∫ (B − t)^(−n) dt` from `t1` to `t2` (`t < B`), scaled by `A`: a
+/// Crystal Ball power-law tail.
+fn power_tail(big_a: f64, big_b: f64, n: f64, t1: f64, t2: f64) -> f64 {
+    if t2 <= t1 {
+        return 0.0;
+    }
+    let (u1, u2) = (big_b - t1, big_b - t2);
+    if (n - 1.0).abs() < 1e-9 {
+        big_a * (u1 / u2).ln()
+    } else {
+        big_a / (n - 1.0) * (u2.powf(1.0 - n) - u1.powf(1.0 - n))
+    }
+}
+
+/// The area of `oxistats::crystal_ball` (unit peak, tail on the low side for
+/// `alpha > 0`) between `lo` and `hi`.
+fn crystal_ball_area(lo: f64, hi: f64, mean: f64, sigma: f64, alpha: f64, n: f64) -> f64 {
+    let s = if sigma == 0.0 {
+        f64::MIN_POSITIVE
+    } else {
+        sigma
+    };
+    let (mut t1, mut t2) = ((lo - mean) / s, (hi - mean) / s);
+    if alpha < 0.0 {
+        (t1, t2) = (-t2, -t1);
+    }
+    let a = alpha.abs().max(f64::MIN_POSITIVE);
+    let big_a = (n / a).powf(n) * (-0.5 * a * a).exp();
+    let big_b = n / a - a;
+    let tail = power_tail(big_a, big_b, n, t1, t2.min(-a));
+    let core = normal_mass(t1.max(-a), t2.max(-a)) * std::f64::consts::TAU.sqrt();
+    s * (tail + core)
+}
+
+/// The area of `oxistats::double_crystal_ball` between `lo` and `hi`.
+#[allow(clippy::too_many_arguments)]
+fn double_crystal_ball_area(
+    lo: f64,
+    hi: f64,
+    mean: f64,
+    sigma: f64,
+    alo: f64,
+    nlo: f64,
+    ahi: f64,
+    nhi: f64,
+) -> f64 {
+    let s = if sigma == 0.0 {
+        f64::MIN_POSITIVE
+    } else {
+        sigma
+    };
+    let (t1, t2) = ((lo - mean) / s, (hi - mean) / s);
+    let (alo, ahi) = (
+        alo.abs().max(f64::MIN_POSITIVE),
+        ahi.abs().max(f64::MIN_POSITIVE),
+    );
+    let low = {
+        let big_a = (nlo / alo).powf(nlo) * (-0.5 * alo * alo).exp();
+        power_tail(big_a, nlo / alo - alo, nlo, t1, t2.min(-alo))
+    };
+    // The high tail A·(B + t)^(−n) is the low tail's mirror: t → −t.
+    let high = {
+        let big_a = (nhi / ahi).powf(nhi) * (-0.5 * ahi * ahi).exp();
+        power_tail(big_a, nhi / ahi - ahi, nhi, -t2, (-t1).min(-ahi))
+    };
+    let core =
+        normal_mass(t1.max(-alo).min(ahi), t2.max(-alo).min(ahi)) * std::f64::consts::TAU.sqrt();
+    s * (low + high + core)
+}
+
+impl Model {
+    /// Attach the model's integral over a region — one `(lo, hi)` per
+    /// variable — known without integrating numerically: unbinned fits then
+    /// normalize with it, and bin-integrated fits average with it, instead of
+    /// quadrature. The built-in shapes have theirs; sums and products of
+    /// models with one have one too.
+    ///
+    /// ```
+    /// # use oxifit::Model;
+    /// let ramp = Model::new("ramp", &["a"], vec![2.0], |x, p| p[0] * x)
+    ///     .with_integral(|p, region| {
+    ///         let (lo, hi) = region[0];
+    ///         0.5 * p[0] * (hi * hi - lo * lo)
+    ///     });
+    /// assert_eq!(ramp.integral(&[(0.0, 3.0)]), Some(9.0));
+    /// ```
+    #[must_use]
+    pub fn with_integral(
+        mut self,
+        integral: impl Fn(&[f64], &[(f64, f64)]) -> f64 + Send + Sync + 'static,
+    ) -> Model {
+        self.integral = Some(std::sync::Arc::new(integral));
+        self
+    }
+
+    /// The model's integral over `region` at its current parameters, when it
+    /// knows it ([`with_integral`](Self::with_integral)); `None` otherwise.
+    #[must_use]
+    pub fn integral(&self, region: &[(f64, f64)]) -> Option<f64> {
+        self.integral.as_ref().map(|i| i(&self.params, region))
+    }
+}
+
 impl Model {
     /// Build a function from named parameters and a closure `f(x, params)`.
     pub fn new(
@@ -349,11 +487,14 @@ impl Model {
             self.dim_mismatch = part.dim_mismatch;
         }
         let (head, tail) = (self.func.clone(), part.func.clone());
+        let (head_f, tail_f) = (head.clone(), tail.clone());
         self.func = std::sync::Arc::new(move |c, p| {
             head(c, &p[..offset]) + tail(c, &p[offset..offset + n])
         });
-        // The sum has a gradient when every part does, and a known integral
-        // when every part has one.
+        // The sum has a gradient when every part does, and always an integral:
+        // each part's known one, or its own numerical one, remembered for the
+        // part's last parameters — so a step in one part's parameters (most of
+        // a minimizer's) integrates that part alone.
         self.grad = match (self.grad.take(), part.grad.clone()) {
             (Some(gh), Some(gt)) => Some(std::sync::Arc::new(move |c, p, out: &mut [f64]| {
                 gh(c, &p[..offset], &mut out[..offset]);
@@ -361,12 +502,17 @@ impl Model {
             })),
             _ => None,
         };
-        self.integral = match (self.integral.take(), part.integral.clone()) {
-            (Some(ih), Some(it)) => Some(std::sync::Arc::new(move |p, region: &[(f64, f64)]| {
-                ih(&p[..offset], region) + it(&p[offset..offset + n], region)
-            })),
-            _ => None,
-        };
+        let ih = self
+            .integral
+            .take()
+            .unwrap_or_else(|| remembered_integral(head_f));
+        let it = part
+            .integral
+            .clone()
+            .unwrap_or_else(|| remembered_integral(tail_f));
+        self.integral = Some(std::sync::Arc::new(move |p, region: &[(f64, f64)]| {
+            ih(&p[..offset], region) + it(&p[offset..offset + n], region)
+        }));
         self
     }
 
@@ -582,6 +728,7 @@ impl Model {
             g[0] = f * u / p[1];
             g[1] = f * (u * u - 1.0) / p[1];
         })
+        .with_integral(|p, r| normal_mass((r[0].0 - p[0]) / p[1], (r[0].1 - p[0]) / p[1]))
     }
 
     /// A Gaussian `[0]·exp(-½·((x-[1])/[2])²)` (ROOT's `"gaus"`); parameters are
@@ -606,6 +753,12 @@ impl Model {
             g[1] = p[0] * e * u / s;
             g[2] = p[0] * e * u * u / s;
         })
+        .with_integral(|p, r| {
+            let s = if p[2] == 0.0 { f64::EPSILON } else { p[2] };
+            p[0] * s.abs()
+                * std::f64::consts::TAU.sqrt()
+                * normal_mass((r[0].0 - p[1]) / s.abs(), (r[0].1 - p[1]) / s.abs())
+        })
     }
 
     /// An exponential `exp([0] + [1]·x)` (ROOT's `"expo"`).
@@ -617,6 +770,15 @@ impl Model {
             let e = (p[0] + p[1] * x).exp();
             g[0] = e;
             g[1] = e * x;
+        })
+        .with_integral(|p, r| {
+            let (lo, hi) = r[0];
+            let base = (p[0] + p[1] * lo).exp();
+            if p[1].abs() * (hi - lo).abs() < 1e-12 {
+                base * (hi - lo)
+            } else {
+                base * (p[1] * (hi - lo)).exp_m1() / p[1]
+            }
         })
     }
 
@@ -634,6 +796,17 @@ impl Model {
                 xk *= x;
             }
         })
+        .with_integral(|p, r| {
+            let (lo, hi) = r[0];
+            let antiderivative = |x: f64| {
+                p.iter()
+                    .enumerate()
+                    .rev()
+                    .fold(0.0, |acc, (k, &c)| acc * x + c / (k as f64 + 1.0))
+                    * x
+            };
+            antiderivative(hi) - antiderivative(lo)
+        })
     }
 
     /// A **Crystal Ball** peak `constant · CB(x; mean, sigma, alpha, n)` — a
@@ -649,6 +822,7 @@ impl Model {
             vec![1.0, 0.0, 1.0, 1.5, 2.0],
             |x, p| p[0] * oxistats::crystal_ball(x, p[1], p[2], p[3], p[4]),
         )
+        .with_integral(|p, r| p[0] * crystal_ball_area(r[0].0, r[0].1, p[1], p[2], p[3], p[4]))
     }
 
     /// A **double-sided Crystal Ball** `constant · DSCB(x)` — a Gaussian core with
@@ -663,6 +837,9 @@ impl Model {
             vec![1.0, 0.0, 1.0, 1.5, 2.0, 1.5, 2.0],
             |x, p| p[0] * oxistats::double_crystal_ball(x, p[1], p[2], p[3], p[4], p[5], p[6]),
         )
+        .with_integral(|p, r| {
+            p[0] * double_crystal_ball_area(r[0].0, r[0].1, p[1], p[2], p[3], p[4], p[5], p[6])
+        })
     }
 
     /// A **Breit–Wigner** resonance `constant · BW(x; mean, gamma)` (a Lorentzian
@@ -674,6 +851,11 @@ impl Model {
             vec![1.0, 0.0, 1.0],
             |x, p| p[0] * oxistats::breit_wigner(x, p[1], p[2]),
         )
+        .with_integral(|p, r| {
+            let hw = p[2].abs().max(f64::MIN_POSITIVE) / 2.0;
+            p[0] / std::f64::consts::PI
+                * (((r[0].1 - p[1]) / hw).atan() - ((r[0].0 - p[1]) / hw).atan())
+        })
     }
 
     /// A **Voigt profile** `constant · V(x; mean, sigma, gamma)` — a Lorentzian of
@@ -717,7 +899,9 @@ impl Model {
     /// (`"[0]+[1]*x"`, `"gaus"`, `"[0]*exp(-[1]*x)+[2]"`, …). Parameters are
     /// `[0], [1], …` and the variable is `x`; the parameter count is inferred
     /// from the formula. All parameters start at zero — seed them with
-    /// [`with_params`](Self::with_params).
+    /// [`with_params`](Self::with_params). The model has an exact gradient,
+    /// from the formula's symbolic derivatives (unless it uses `lgamma`), so
+    /// MIGRAD, HESSE and L-BFGS-B do not need finite differences.
     ///
     /// # Errors
     /// Returns a [`ParseError`](oxifit_formula::ParseError) if the formula does
@@ -728,12 +912,19 @@ impl Model {
         // Own the parameter names so the closure can move `f`.
         let names = f.param_names().to_vec();
         let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        Ok(Model::new(
-            name,
-            &name_refs,
-            vec![0.0; npar],
-            move |x, p| f.eval1(x, p),
-        ))
+        // The exact gradient, from the formula's symbolic derivatives, when
+        // every one exists.
+        let derivatives: Option<Vec<oxifit_formula::Formula>> =
+            (0..npar).map(|k| f.derivative(k)).collect();
+        let model = Model::new(name, &name_refs, vec![0.0; npar], move |x, p| f.eval1(x, p));
+        Ok(match derivatives {
+            Some(d) => model.with_gradient(move |x, p, g| {
+                for (gk, dk) in g.iter_mut().zip(&d) {
+                    *gk = dk.eval1(x, p);
+                }
+            }),
+            None => model,
+        })
     }
 
     /// Replace the (initial) parameter values.
