@@ -1,0 +1,130 @@
+{
+ "channels": [
+  {
+   "name": "SR",
+   "samples": [
+    {
+     "name": "signal",
+     "data": [
+      3.0,
+      6.0
+     ],
+     "modifiers": [
+      {
+       "name": "mu",
+       "type": "normfactor",
+       "data": null
+      },
+      {
+       "name": "lumi",
+       "type": "lumi",
+       "data": null
+      }
+     ]
+    },
+    {
+     "name": "background",
+     "data": [
+      20.0,
+      15.0
+     ],
+     "modifiers": [
+      {
+       "name": "unc",
+       "type": "shapesys",
+       "data": [
+        3.0,
+        2.0
+       ]
+      },
+      {
+       "name": "xsec",
+       "type": "normsys",
+       "data": {
+        "hi": 1.1,
+        "lo": 0.85
+       }
+      },
+      {
+       "name": "lumi",
+       "type": "lumi",
+       "data": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "CR",
+   "samples": [
+    {
+     "name": "background",
+     "data": [
+      100.0,
+      80.0
+     ],
+     "modifiers": [
+      {
+       "name": "xsec",
+       "type": "normsys",
+       "data": {
+        "hi": 1.1,
+        "lo": 0.85
+       }
+      },
+      {
+       "name": "lumi",
+       "type": "lumi",
+       "data": null
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "observations": [
+  {
+   "name": "SR",
+   "data": [
+    27.0,
+    24.0
+   ]
+  },
+  {
+   "name": "CR",
+   "data": [
+    95.0,
+    88.0
+   ]
+  }
+ ],
+ "measurements": [
+  {
+   "name": "m",
+   "config": {
+    "poi": "mu",
+    "parameters": [
+     {
+      "name": "lumi",
+      "auxdata": [
+       1.0
+      ],
+      "sigmas": [
+       0.02
+      ],
+      "bounds": [
+       [
+        0.5,
+        1.5
+       ]
+      ],
+      "inits": [
+       1.0
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "version": "1.0.0"
+}

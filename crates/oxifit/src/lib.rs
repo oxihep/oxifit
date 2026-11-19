@@ -48,6 +48,7 @@ mod result;
 mod rng;
 mod scan;
 mod simultaneous;
+mod template;
 mod toys;
 
 pub use cost::{Cost, CostSum, FnCost, ModelCost};
@@ -68,4 +69,9 @@ pub use result::{
 };
 pub use scan::{Contour, FitError, Profile};
 pub use simultaneous::Simultaneous;
+#[cfg(feature = "pyhf")]
+pub use template::Workspace;
+pub use template::{
+    Channel, ChannelYields, HistoInterp, Impact, NormInterp, Sample, TemplateError, TemplateModel,
+};
 pub use toys::{PullSummary, ToyStudy, Toys};
