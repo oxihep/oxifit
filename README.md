@@ -5,8 +5,8 @@
 [![Rust 1.100+](https://img.shields.io/badge/rust-1.100%2B-orange.svg)](https://www.rust-lang.org)
 [![API docs](https://img.shields.io/badge/docs-API-blue.svg)](https://oxihep.github.io/oxifit/oxifit/)
 
-Parametric curve fitting in pure Rust for **any 1-D data**: histograms, graphs
-or raw `(x, y, σ)` points. The minimizer is the pure-Rust
+Parametric fitting in pure Rust for **data of one to three variables**:
+histograms, graphs, raw points or individual events. The minimizer is the pure-Rust
 [Minuit2](https://crates.io/crates/minuit2) port, the algorithm ROOT uses.
 
 | Crate | What it is |
@@ -62,6 +62,16 @@ The global searches look inside each free parameter's limits, so set a
 `limit` on the parameters to be searched. They are seeded and reproducible.
 `FitOptions::strategy`, `tolerance` and `max_fcn` tune Minuit2, and
 `with_hesse(false)` skips HESSE when only the values matter.
+
+## 2-D and 3-D fits
+
+`Model::new2(|x, y, p| …)` and `Model::new3(|x, y, z, p| …)` take two or three
+variables; `Model::product("m", &[&fx, &fy])` builds one from 1-D models (its
+integral factorizes, so unbinned fits normalize it with 1-D integrals).
+`Points2`/`Points3` hold binned or graph data (a 2-D/3-D histogram's bins),
+`Events2`/`Events3` unbinned events; `FitOptions::range_y`/`range_z` restrict
+and bound the fit. Every fit method, scan and minimizer works on them, and a
+`Simultaneous` fit can mix dimensions.
 
 ## Analytic gradients
 

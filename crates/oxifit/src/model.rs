@@ -7,13 +7,19 @@ use crate::data::{FitData, Point};
 /// The most intervals one convolution integral may use.
 const CONV_INTERVALS: usize = 200;
 
-/// A model evaluator: `f(x, params) -> y`. `Send + Sync` so a [`Model`] can cross
-/// thread boundaries (e.g. be shared by a parallel fit); an `Arc` so [`Model`] is
-/// cheaply `Clone` (clones share the immutable closure).
-type ModelFn = std::sync::Arc<dyn Fn(f64, &[f64]) -> f64 + Send + Sync>;
+/// A model evaluator: `f(coords, params) -> y`, `coords` holding the model's
+/// 1–3 variables. `Send + Sync` so a [`Model`] can cross thread boundaries
+/// (e.g. be shared by a parallel fit); an `Arc` so [`Model`] is cheaply `Clone`
+/// (clones share the immutable closure).
+type ModelFn = std::sync::Arc<dyn Fn(&[f64], &[f64]) -> f64 + Send + Sync>;
 
-/// A model's gradient: `g(x, params, out)` writes `∂f/∂pₖ` into `out[k]`.
-pub(crate) type GradFn = std::sync::Arc<dyn Fn(f64, &[f64], &mut [f64]) + Send + Sync>;
+/// A model's gradient: `g(coords, params, out)` writes `∂f/∂pₖ` into `out[k]`.
+pub(crate) type GradFn = std::sync::Arc<dyn Fn(&[f64], &[f64], &mut [f64]) + Send + Sync>;
+
+/// A model's integral over a region — one `(lo, hi)` per variable — at the
+/// given parameters, when it is known without integrating numerically (a
+/// product of 1-D factors, a sum of such).
+pub(crate) type IntegralFn = std::sync::Arc<dyn Fn(&[f64], &[(f64, f64)]) -> f64 + Send + Sync>;
 
 /// Optional fit constraints on one parameter.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -51,6 +57,14 @@ pub struct Model {
     /// other per-parameter setters that match no parameter — a typo would
     /// otherwise be silently ignored. See [`check`](Model::check).
     pub(crate) unknown: Vec<String>,
+    /// The number of variables, 1–3.
+    pub(crate) dim: usize,
+    /// A part of another dimension where one was required (in a sum, a
+    /// product or a convolution): `(expected, found)`. See [`check`](Model::check).
+    pub(crate) dim_mismatch: Option<(usize, usize)>,
+    /// The integral over a region, when known without integrating
+    /// numerically (products, sums of known integrals).
+    pub(crate) integral: Option<IntegralFn>,
 }
 
 impl Model {
@@ -60,6 +74,51 @@ impl Model {
         param_names: &[&str],
         params: Vec<f64>,
         func: impl Fn(f64, &[f64]) -> f64 + Send + Sync + 'static,
+    ) -> Model {
+        Model::with_dim(name, param_names, params, 1, move |c, p| func(c[0], p))
+    }
+
+    /// A model of two variables, `f(x, y, params)` — for 2-D histograms,
+    /// [`Points2`](crate::Points2) and [`Events2`](crate::Events2).
+    ///
+    /// ```
+    /// # use oxifit::Model;
+    /// let plane = Model::new2("plane", &["a", "b", "c"], vec![1.0, 2.0, 3.0], |x, y, p| {
+    ///     p[0] + p[1] * x + p[2] * y
+    /// });
+    /// assert_eq!(plane.eval_at(&[1.0, 1.0]), 6.0);
+    /// ```
+    pub fn new2(
+        name: &str,
+        param_names: &[&str],
+        params: Vec<f64>,
+        func: impl Fn(f64, f64, &[f64]) -> f64 + Send + Sync + 'static,
+    ) -> Model {
+        Model::with_dim(name, param_names, params, 2, move |c, p| {
+            func(c[0], c[1], p)
+        })
+    }
+
+    /// A model of three variables, `f(x, y, z, params)` — for 3-D histograms,
+    /// [`Points3`](crate::Points3) and [`Events3`](crate::Events3).
+    pub fn new3(
+        name: &str,
+        param_names: &[&str],
+        params: Vec<f64>,
+        func: impl Fn(f64, f64, f64, &[f64]) -> f64 + Send + Sync + 'static,
+    ) -> Model {
+        Model::with_dim(name, param_names, params, 3, move |c, p| {
+            func(c[0], c[1], c[2], p)
+        })
+    }
+
+    /// A model of `dim` variables from a closure over the coordinates.
+    fn with_dim(
+        name: &str,
+        param_names: &[&str],
+        params: Vec<f64>,
+        dim: usize,
+        func: impl Fn(&[f64], &[f64]) -> f64 + Send + Sync + 'static,
     ) -> Model {
         let constraints = vec![Constraint::default(); params.len()];
         Model {
@@ -71,7 +130,16 @@ impl Model {
             grad: None,
             parts: None,
             unknown: Vec::new(),
+            dim,
+            dim_mismatch: None,
+            integral: None,
         }
+    }
+
+    /// The number of variables the model takes: 1, 2 or 3.
+    #[must_use]
+    pub fn dim(&self) -> usize {
+        self.dim
     }
 
     /// Index of the parameter named `name`.
@@ -106,9 +174,18 @@ impl Model {
     /// assert!(Model::gaussian("g").lower_limit("sigma", 0.0).check().is_ok());
     /// ```
     ///
+    /// It also reports a sum, product or convolution built from parts of the
+    /// wrong dimension.
+    ///
     /// # Errors
-    /// [`FitError::UnknownParameter`](crate::FitError::UnknownParameter) with the first unknown name.
+    /// [`FitError::DimensionMismatch`](crate::FitError::DimensionMismatch) for
+    /// parts of the wrong dimension, else
+    /// [`FitError::UnknownParameter`](crate::FitError::UnknownParameter) with the
+    /// first unknown name.
     pub fn check(&self) -> Result<(), crate::FitError> {
+        if let Some((expected, found)) = self.dim_mismatch {
+            return Err(crate::FitError::DimensionMismatch { expected, found });
+        }
         match self.unknown.first() {
             Some(name) => Err(crate::FitError::UnknownParameter(name.clone())),
             None => Ok(()),
@@ -226,6 +303,9 @@ impl Model {
             grad: Some(std::sync::Arc::new(|_, _, _| {})),
             parts: Some(Vec::new()),
             unknown: Vec::new(),
+            dim: parts.first().map_or(1, |p| p.dim),
+            dim_mismatch: None,
+            integral: Some(std::sync::Arc::new(|_, _| 0.0)),
         };
         parts.iter().fold(empty, |sum, part| sum.push_part(part))
     }
@@ -262,15 +342,28 @@ impl Model {
                 self.unknown.push(u.clone());
             }
         }
+        if part.dim != self.dim && self.dim_mismatch.is_none() {
+            self.dim_mismatch = Some((self.dim, part.dim));
+        }
+        if self.dim_mismatch.is_none() {
+            self.dim_mismatch = part.dim_mismatch;
+        }
         let (head, tail) = (self.func.clone(), part.func.clone());
-        self.func = std::sync::Arc::new(move |x, p| {
-            head(x, &p[..offset]) + tail(x, &p[offset..offset + n])
+        self.func = std::sync::Arc::new(move |c, p| {
+            head(c, &p[..offset]) + tail(c, &p[offset..offset + n])
         });
-        // The sum has a gradient when every part does.
+        // The sum has a gradient when every part does, and a known integral
+        // when every part has one.
         self.grad = match (self.grad.take(), part.grad.clone()) {
-            (Some(gh), Some(gt)) => Some(std::sync::Arc::new(move |x, p, out: &mut [f64]| {
-                gh(x, &p[..offset], &mut out[..offset]);
-                gt(x, &p[offset..offset + n], &mut out[offset..offset + n]);
+            (Some(gh), Some(gt)) => Some(std::sync::Arc::new(move |c, p, out: &mut [f64]| {
+                gh(c, &p[..offset], &mut out[..offset]);
+                gt(c, &p[offset..offset + n], &mut out[offset..offset + n]);
+            })),
+            _ => None,
+        };
+        self.integral = match (self.integral.take(), part.integral.clone()) {
+            (Some(ih), Some(it)) => Some(std::sync::Arc::new(move |p, region: &[(f64, f64)]| {
+                ih(&p[..offset], region) + it(&p[offset..offset + n], region)
             })),
             _ => None,
         };
@@ -307,6 +400,13 @@ impl Model {
         // The parameters, names and constraints as for a two-part sum.
         let mut m = Model::sum(name, &[signal, resolution]);
         m.parts = None; // a convolution is not a sum: `+` must not append to it
+        m.integral = None;
+        for part in [signal, resolution] {
+            if part.dim != 1 && m.dim_mismatch.is_none() {
+                m.dim_mismatch = Some((1, part.dim));
+            }
+        }
+        m.dim = 1;
         let (lo, hi) = if window.0 <= window.1 {
             window
         } else {
@@ -316,24 +416,26 @@ impl Model {
         let nr = resolution.params.len();
         let (f, g) = (signal.func.clone(), resolution.func.clone());
         let (fv, gv) = (f.clone(), g.clone());
-        m.func = std::sync::Arc::new(move |x, p| {
+        m.func = std::sync::Arc::new(move |c, p| {
             let (ps, pr) = p.split_at(ns);
-            let integrand = |t: f64| fv(x - t, ps) * gv(t, pr);
+            let x = c[0];
+            let integrand = |t: f64| fv(&[x - t], ps) * gv(&[t], pr);
             oxifit_formula::integrate_adaptive(integrand, lo, hi, 1e-10, CONV_INTERVALS).0
         });
         m.grad = match (signal.grad.clone(), resolution.grad.clone()) {
-            (Some(fg), Some(gg)) => Some(std::sync::Arc::new(move |x, p, out: &mut [f64]| {
+            (Some(fg), Some(gg)) => Some(std::sync::Arc::new(move |c, p, out: &mut [f64]| {
                 let (ps, pr) = p.split_at(ns);
+                let x = c[0];
                 for (k, o) in out.iter_mut().enumerate().take(ns + nr) {
                     let integrand = |t: f64| {
                         if k < ns {
                             let mut d = vec![0.0; ns];
-                            fg(x - t, ps, &mut d);
-                            d[k] * g(t, pr)
+                            fg(&[x - t], ps, &mut d);
+                            d[k] * g(&[t], pr)
                         } else {
                             let mut d = vec![0.0; nr];
-                            gg(t, pr, &mut d);
-                            f(x - t, ps) * d[k - ns]
+                            gg(&[t], pr, &mut d);
+                            f(&[x - t], ps) * d[k - ns]
                         }
                     };
                     *o = oxifit_formula::integrate_adaptive(
@@ -348,6 +450,119 @@ impl Model {
             })),
             _ => None,
         };
+        m
+    }
+
+    /// The product of 1-D models, one per variable: `f(x, y) = fx(x)·fy(y)`
+    /// (or three for `f(x, y, z)`) — RooFit's `RooProdPdf`, the usual way to
+    /// build a 2-D or 3-D shape from 1-D ones. Parameters are the factors',
+    /// named after them as in a [`sum`](Self::sum); keep only one overall
+    /// scale free (multiply a [`gaussian`](Self::gaussian) by a unit-area
+    /// [`normal`](Self::normal), say). It has a gradient when every factor
+    /// does, and its integral over a region is the product of the factors' —
+    /// so an unbinned fit normalizes it with 1-D integrals only.
+    ///
+    /// ```
+    /// # use oxifit::Model;
+    /// let blob = Model::product(
+    ///     "blob",
+    ///     &[&Model::gaussian("x").with_params(vec![10.0, 0.0, 1.0]), &Model::normal("y")],
+    /// );
+    /// assert_eq!(blob.dim(), 2);
+    /// assert_eq!(blob.param_names, ["x.constant", "x.mean", "x.sigma", "y.mean", "y.sigma"]);
+    /// let peak = blob.eval_at(&[0.0, 0.0]);
+    /// assert!((peak - 10.0 / std::f64::consts::TAU.sqrt()).abs() < 1e-12);
+    /// ```
+    pub fn product(name: &str, factors: &[&Model]) -> Model {
+        let mut m = Model::sum(name, factors);
+        m.parts = None; // a product is not a sum: `+` must not append to it
+        m.dim = factors.len().clamp(1, 3);
+        m.dim_mismatch = None;
+        if factors.len() > 3 {
+            m.dim_mismatch = Some((3, factors.len()));
+        }
+        for f in factors {
+            if f.dim != 1 && m.dim_mismatch.is_none() {
+                m.dim_mismatch = Some((1, f.dim));
+            }
+        }
+        // Each factor's offset and parameter count, its function, gradient
+        // and integral.
+        let mut layout = Vec::new();
+        let mut offset = 0;
+        for f in factors.iter().take(3) {
+            let n = f.params.len();
+            layout.push((
+                offset,
+                n,
+                f.func.clone(),
+                f.grad.clone(),
+                f.integral.clone(),
+            ));
+            offset += n;
+        }
+        let funcs: Vec<(usize, usize, ModelFn)> = layout
+            .iter()
+            .map(|(o, n, f, _, _)| (*o, *n, f.clone()))
+            .collect();
+        m.func = std::sync::Arc::new(move |c, p| {
+            funcs
+                .iter()
+                .enumerate()
+                .map(|(k, (o, n, f))| f(&[c[k]], &p[*o..o + n]))
+                .product()
+        });
+        let grads: Option<Vec<(usize, usize, ModelFn, GradFn)>> = layout
+            .iter()
+            .map(|(o, n, f, g, _)| g.clone().map(|g| (*o, *n, f.clone(), g)))
+            .collect();
+        m.grad = grads.map(|grads| {
+            std::sync::Arc::new(move |c: &[f64], p: &[f64], out: &mut [f64]| {
+                let values: Vec<f64> = grads
+                    .iter()
+                    .enumerate()
+                    .map(|(k, (o, n, f, _))| f(&[c[k]], &p[*o..o + n]))
+                    .collect();
+                for (k, (o, n, _, g)) in grads.iter().enumerate() {
+                    let others: f64 = values
+                        .iter()
+                        .enumerate()
+                        .filter(|(j, _)| *j != k)
+                        .map(|(_, v)| v)
+                        .product();
+                    g(&[c[k]], &p[*o..o + n], &mut out[*o..o + n]);
+                    out[*o..o + n].iter_mut().for_each(|v| *v *= others);
+                }
+            }) as GradFn
+        });
+        // ∫∫ fx·fy = ∫fx · ∫fy: each factor's own integral, or a 1-D one.
+        let factors_int: Vec<(usize, usize, ModelFn, Option<IntegralFn>)> = layout
+            .into_iter()
+            .map(|(o, n, f, _, i)| (o, n, f, i))
+            .collect();
+        m.integral = Some(std::sync::Arc::new(move |p, region: &[(f64, f64)]| {
+            factors_int
+                .iter()
+                .enumerate()
+                .map(|(k, (o, n, f, i))| {
+                    let (lo, hi) = region[k];
+                    let pk = &p[*o..o + n];
+                    match i {
+                        Some(i) => i(pk, &[(lo, hi)]),
+                        None => {
+                            oxifit_formula::integrate_adaptive(
+                                |x| f(&[x], pk),
+                                lo,
+                                hi,
+                                1e-10,
+                                CONV_INTERVALS,
+                            )
+                            .0
+                        }
+                    }
+                })
+                .product()
+        }));
         m
     }
 
@@ -529,10 +744,23 @@ impl Model {
         self
     }
 
-    /// Evaluate the function at `x` using its current parameters.
+    /// Evaluate a 1-D model at `x` using its current parameters (`NaN` for a
+    /// model of more variables: use [`eval_at`](Self::eval_at)).
     #[must_use]
     pub fn eval(&self, x: f64) -> f64 {
-        (self.func)(x, &self.params)
+        self.eval_at(&[x])
+    }
+
+    /// Evaluate the model at the point `coords` (one value per variable)
+    /// using its current parameters; `NaN` if `coords` does not have
+    /// [`dim`](Self::dim) values.
+    #[must_use]
+    pub fn eval_at(&self, coords: &[f64]) -> f64 {
+        if coords.len() == self.dim {
+            (self.func)(coords, &self.params)
+        } else {
+            f64::NAN
+        }
     }
 
     /// Give the model its analytic gradient: `grad(x, params, out)` writes
@@ -562,6 +790,18 @@ impl Model {
         mut self,
         grad: impl Fn(f64, &[f64], &mut [f64]) + Send + Sync + 'static,
     ) -> Model {
+        self.grad = Some(std::sync::Arc::new(move |c, p, out| grad(c[0], p, out)));
+        self
+    }
+
+    /// Give a model of any dimension its analytic gradient:
+    /// `grad(coords, params, out)` writes `∂f/∂pₖ` at the point `coords` into
+    /// `out[k]` (see [`with_gradient`](Self::with_gradient), its 1-D form).
+    #[must_use]
+    pub fn with_gradient_at(
+        mut self,
+        grad: impl Fn(&[f64], &[f64], &mut [f64]) + Send + Sync + 'static,
+    ) -> Model {
         self.grad = Some(std::sync::Arc::new(grad));
         self
     }
@@ -572,20 +812,26 @@ impl Model {
         self.grad.is_some()
     }
 
-    /// The gradient `∂f/∂p` at `x` with the current parameters: analytic when
-    /// the model has one, else a central difference.
+    /// The gradient `∂f/∂p` of a 1-D model at `x` with the current
+    /// parameters: analytic when the model has one, else a central difference.
     #[must_use]
     pub fn gradient(&self, x: f64) -> Vec<f64> {
+        self.gradient_at(&[x])
+    }
+
+    /// The gradient `∂f/∂p` at the point `coords`, as [`gradient`](Self::gradient).
+    #[must_use]
+    pub fn gradient_at(&self, coords: &[f64]) -> Vec<f64> {
         let mut out = vec![0.0; self.params.len()];
         match &self.grad {
-            Some(g) => g(x, &self.params, &mut out),
-            None => out = self.numerical_gradient(x),
+            Some(g) => g(coords, &self.params, &mut out),
+            None => out = self.numerical_gradient(coords),
         }
         out
     }
 
     /// `∂f/∂p` at `x` by central differences (step `1e-6·max(|p|, 1)`).
-    fn numerical_gradient(&self, x: f64) -> Vec<f64> {
+    fn numerical_gradient(&self, x: &[f64]) -> Vec<f64> {
         let mut p = self.params.clone();
         (0..p.len())
             .map(|k| {
@@ -601,18 +847,26 @@ impl Model {
             .collect()
     }
 
-    /// The largest disagreement between the model's analytic gradient and a
+    /// The largest disagreement between a 1-D model's analytic gradient and a
     /// central difference over the points `xs`, at the current parameters —
     /// relative to the larger of the two (or absolute below 1): about `1e-8`
     /// for a correct gradient. `NaN` when the model has no gradient.
     #[must_use]
     pub fn check_gradient(&self, xs: &[f64]) -> f64 {
+        let points: Vec<Vec<f64>> = xs.iter().map(|&x| vec![x]).collect();
+        self.check_gradient_at(&points)
+    }
+
+    /// [`check_gradient`](Self::check_gradient) at points of any dimension.
+    #[must_use]
+    pub fn check_gradient_at(&self, points: &[Vec<f64>]) -> f64 {
         let Some(g) = &self.grad else {
             return f64::NAN;
         };
         let mut out = vec![0.0; self.params.len()];
-        xs.iter()
-            .flat_map(|&x| {
+        points
+            .iter()
+            .flat_map(|x| {
                 out.iter_mut().for_each(|o| *o = 0.0);
                 g(x, &self.params, &mut out);
                 let num = self.numerical_gradient(x);

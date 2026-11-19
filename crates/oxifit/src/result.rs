@@ -293,6 +293,11 @@ pub struct FitOptions {
     pub method: FitMethod,
     /// Restrict the fit to points whose `x` lies in `[lo, hi]`.
     pub range: Option<(f64, f64)>,
+    /// For 2-D and 3-D data: restrict the fit to points whose `y` lies in
+    /// `[lo, hi]` (and normalize unbinned fits over it).
+    pub range_y: Option<(f64, f64)>,
+    /// For 3-D data: restrict the fit to points whose `z` lies in `[lo, hi]`.
+    pub range_z: Option<(f64, f64)>,
     /// Also compute asymmetric [MINOS](https://root.cern/doc/master/classTMinuit.html)
     /// errors for each free parameter (a likelihood scan — more accurate than the
     /// parabolic errors near a non-quadratic minimum, but extra work).
@@ -344,6 +349,8 @@ impl Default for FitOptions {
         FitOptions {
             method: FitMethod::default(),
             range: None,
+            range_y: None,
+            range_z: None,
             minos: false,
             hesse: true,
             sumw2: false,
@@ -374,6 +381,18 @@ impl FitOptions {
     #[must_use]
     pub fn range(mut self, lo: f64, hi: f64) -> FitOptions {
         self.range = Some((lo, hi));
+        self
+    }
+    /// For 2-D and 3-D data: fit only the points whose `y` lies in `[lo, hi]`.
+    #[must_use]
+    pub fn range_y(mut self, lo: f64, hi: f64) -> FitOptions {
+        self.range_y = Some((lo, hi));
+        self
+    }
+    /// For 3-D data: fit only the points whose `z` lies in `[lo, hi]`.
+    #[must_use]
+    pub fn range_z(mut self, lo: f64, hi: f64) -> FitOptions {
+        self.range_z = Some((lo, hi));
         self
     }
     /// Also compute asymmetric MINOS errors (see [`minos`](Self::minos) field).

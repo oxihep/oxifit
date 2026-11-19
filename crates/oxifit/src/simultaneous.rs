@@ -1,7 +1,7 @@
 //! Simultaneous fits — RooFit's `RooSimultaneous`: several datasets, each with
 //! its own model and cost, fitted together with the parameters they share.
 
-use crate::data::{FitData, Point};
+use crate::data::{FitDataNd, PointNd};
 use crate::engine::{self, CostFn, DataTerm, GradCostFn, Prepared};
 use crate::model::{Constraint, Model};
 use crate::result::{FitOptions, FitResult};
@@ -10,7 +10,8 @@ use crate::result::{FitOptions, FitResult};
 #[derive(Debug, Clone)]
 struct Channel {
     name: String,
-    points: Vec<Point>,
+    points: Vec<PointNd>,
+    dim: usize,
     model: Model,
     opts: FitOptions,
 }
@@ -60,13 +61,14 @@ impl Simultaneous {
     pub fn channel(
         mut self,
         name: &str,
-        data: &(impl FitData + ?Sized),
+        data: &(impl FitDataNd + ?Sized),
         model: &Model,
         opts: &FitOptions,
     ) -> Simultaneous {
         self.channels.push(Channel {
             name: name.to_string(),
-            points: data.points(),
+            points: data.points_nd(),
+            dim: data.dim(),
             model: model.clone(),
             opts: *opts,
         });
@@ -110,6 +112,13 @@ impl Simultaneous {
         model.param_names = names;
         model.constraints = constraints;
         for ch in &self.channels {
+            // A channel whose data and model differ in dimension.
+            if ch.dim != ch.model.dim && model.dim_mismatch.is_none() {
+                model.dim_mismatch = Some((ch.model.dim, ch.dim));
+            }
+            if model.dim_mismatch.is_none() {
+                model.dim_mismatch = ch.model.dim_mismatch;
+            }
             for u in &ch.model.unknown {
                 if !model.unknown.contains(u) {
                     model.unknown.push(u.clone());
@@ -131,7 +140,7 @@ impl Simultaneous {
         let preps: Vec<Prepared> = self
             .channels
             .iter()
-            .map(|ch| Prepared::new(&ch.points, &ch.model, &ch.opts))
+            .map(|ch| Prepared::new(&ch.points, ch.dim, &ch.model, &ch.opts))
             .collect();
         let gather = |p: &[f64], map: &[usize]| map.iter().map(|&g| p[g]).collect::<Vec<f64>>();
         let cost = |p: &[f64]| {
@@ -212,7 +221,7 @@ impl Simultaneous {
             .iter()
             .zip(&maps)
             .map(|(ch, map)| {
-                let prep = Prepared::new(&ch.points, &ch.model, &ch.opts);
+                let prep = Prepared::new(&ch.points, ch.dim, &ch.model, &ch.opts);
                 let p: Vec<f64> = map.iter().map(|&g| result.params[g]).collect();
                 (ch.name.clone(), prep.cost(&p), prep.n_points())
             })

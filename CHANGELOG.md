@@ -6,7 +6,27 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Breaking
+
+- `FitExt` is now implemented for `FitDataNd` (every 1-D `FitData` gets
+  it through a blanket implementation, so `data.fit(&model)` is unchanged);
+  code that named `FitExt: FitData` as a bound uses `FitDataNd`.
+- `FitError` gains `DimensionMismatch`.
+
 ### Added
+
+- **2-D and 3-D fits.** `Model::new2(|x, y, p| …)`, `Model::new3(|x, y, z, p|
+  …)` and `Model::product("m", &[&fx, &fy(, &fz)])` (RooFit's
+  `RooProdPdf`: its gradient by the product rule, its integral factorized);
+  `Model::eval_at`, `gradient_at`, `with_gradient_at`, `check_gradient_at`
+  and `dim`. Data: `Points2`/`Points3` (binned or graph data, `PointNd`) and
+  `Events2`/`Events3` (unbinned, weighted or not), through the new
+  `FitDataNd` trait. `FitOptions::range_y`/`range_z` select points and bound
+  the unbinned normalization, which uses a model's known integral (products,
+  sums of products) or nested adaptive quadrature. Every cost, minimizer,
+  gradient, scan and simultaneous fit works in 2-D and 3-D; a model and data
+  of different dimensions fit as invalid (`Model::check`,
+  `FitError::DimensionMismatch`).
 
 - **Convolution** (RooFit's `RooFFTConvPdf`): `Model::convolve(name,
   &signal, &resolution, window)` is `∫ f(x − t)·g(t) dt` over the window,
