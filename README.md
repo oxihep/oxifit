@@ -125,6 +125,36 @@ let fit = Fitter::new(&total, seeds)
 `ModelCost::fitter()` starts from the model's own seeds and settings, so
 `ModelCost::new(&d, &m, &o).fitter().fit(&o)` is exactly `d.fit_opts(&m, &o)`.
 
+## Significance and limits
+
+`HypoTest::new(fitter, "mu")` tests a parameter of interest — a signal
+strength — on any cost, with the profile likelihood ratio, the pyhf / RooStats
+recipe:
+
+- `discovery(1.0)`: the observed `q₀`, p-value and significance, and the
+  median significance expected for a signal of strength 1;
+- `cls(mu)`: CLs+b, CLb and CLs at `mu` (`q̃_μ` by default, or `q_μ`), with
+  the expected −2σ…+2σ band;
+- `upper_limit(0.95, (lo, hi))`: the observed 95 % CL upper limit and the
+  expected band (the "Brazil band");
+- `cls_toys` / `discovery_toys`: the same from pseudo-experiments, for small
+  counts, in parallel with the `rayon` feature.
+
+The asymptotic results (Cowan, Cranmer, Gross, Vitells) use the cost's Asimov
+dataset and the toys its pseudo-datasets, which `ModelCost` makes for binned and
+unbinned data (and `CostSum` for sums of them); the `Fitter`'s Gaussian
+constraints are the auxiliary measurements. `upcrossings` and
+`global_significance` give the look-elsewhere correction of a mass scan
+(Gross–Vitells). CLs, the limits and the discovery p-value match pyhf
+(`tests/inference.rs`).
+
+```rust
+let cost = ModelCost::new(&hist, &signal_plus_background, &FitOptions::new().method(FitMethod::Likelihood));
+let test = HypoTest::new(cost.fitter().limit("mu", 0.0, 10.0), "mu")?;
+let limit = test.upper_limit(0.95, (0.0, 5.0))?;
+println!("μ < {:.2} (expected {:.2})", limit.observed, limit.expected[2]);
+```
+
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,

@@ -211,7 +211,10 @@ impl Fit<'_> {
             .unwrap_or_else(|| (value.abs() * 0.1).max(0.01))
     }
 
-    /// The model's seed, moved inside any limits it lies outside.
+    /// The model's seed, moved inside any limits it lies outside — and a free
+    /// parameter that starts exactly on a limit moved just inside it: Minuit's
+    /// limit transform is flat there, so MIGRAD would never move it (a signal
+    /// strength seeded at its lower limit 0 would stay 0).
     pub(crate) fn seed(&self) -> Vec<f64> {
         self.model
             .params
@@ -220,7 +223,23 @@ impl Fit<'_> {
             .map(|(i, &v)| {
                 let c = self.constraint(i);
                 let v = c.lower.map_or(v, |lo| v.max(lo));
-                c.upper.map_or(v, |hi| v.min(hi))
+                let v = c.upper.map_or(v, |hi| v.min(hi));
+                if c.fixed {
+                    return v;
+                }
+                let inset = match (c.lower, c.upper) {
+                    (Some(lo), Some(hi)) => 1e-3 * (hi - lo),
+                    _ => 0.1 * self.step(i, v),
+                };
+                match (c.lower, c.upper) {
+                    (Some(lo), hi) if v == lo && hi.is_none_or(|h| h > lo) => {
+                        hi.map_or(lo + inset, |h| (lo + inset).min(0.5 * (lo + h)))
+                    }
+                    (lo, Some(hi)) if v == hi && lo.is_none_or(|l| l < hi) => {
+                        lo.map_or(hi - inset, |l| (hi - inset).max(0.5 * (l + hi)))
+                    }
+                    _ => v,
+                }
             })
             .collect()
     }
@@ -369,6 +388,21 @@ impl Prepared {
             sum_w,
             sum_w2,
         }
+    }
+
+    /// The unbinned normalization region, one `(lo, hi)` per variable.
+    pub(crate) fn region(&self) -> &[(f64, f64)] {
+        &self.region
+    }
+
+    /// The sum of the event weights (the number of events, unweighted).
+    pub(crate) fn sum_w(&self) -> f64 {
+        self.sum_w
+    }
+
+    /// The method.
+    pub(crate) fn method(&self) -> FitMethod {
+        self.method
     }
 
     /// The number of points (events) entering the fit.

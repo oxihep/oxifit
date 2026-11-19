@@ -53,6 +53,13 @@ pub enum FitError {
         /// The dimension found.
         found: usize,
     },
+    /// The cost cannot make the Asimov dataset or pseudo-datasets a
+    /// hypothesis test needs (see [`Cost::asimov`](crate::Cost::asimov)) — a
+    /// closure cost, or a sum with one.
+    NotGenerative,
+    /// An upper limit was not bracketed: the CLs value does not cross the
+    /// requested level inside the scanned range — widen it.
+    NoCrossing,
 }
 
 impl std::fmt::Display for FitError {
@@ -64,6 +71,10 @@ impl std::fmt::Display for FitError {
             FitError::DimensionMismatch { expected, found } => {
                 write!(f, "expected {expected} variable(s), found {found}")
             }
+            FitError::NotGenerative => {
+                write!(f, "the cost cannot make Asimov or pseudo-datasets")
+            }
+            FitError::NoCrossing => write!(f, "CLs does not cross the level in the range"),
         }
     }
 }

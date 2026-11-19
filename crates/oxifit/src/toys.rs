@@ -178,7 +178,7 @@ enum Sample {
 /// Draws from a density on `[lo, hi]`: the density tabulated at the edges of
 /// [`GRID`] equal cells and taken linear within each, so a cell is chosen by
 /// its trapezoid area and a point within it by inverting the linear CDF.
-struct Sampler {
+pub(crate) struct Sampler {
     lo: f64,
     width: f64,
     /// The density at the cell edges (clamped at zero).
@@ -186,11 +186,11 @@ struct Sampler {
     /// Cumulative cell areas, normalized to end at 1.
     cdf: Vec<f64>,
     /// The density's integral over the range (the trapezoid sum).
-    total: f64,
+    pub(crate) total: f64,
 }
 
 impl Sampler {
-    fn new(f: impl Fn(f64) -> f64, lo: f64, hi: f64) -> Sampler {
+    pub(crate) fn new(f: impl Fn(f64) -> f64, lo: f64, hi: f64) -> Sampler {
         let width = (hi - lo) / GRID as f64;
         let edge: Vec<f64> = (0..=GRID)
             .map(|k| {
@@ -219,7 +219,7 @@ impl Sampler {
         }
     }
 
-    fn draw(&self, rng: &mut Rng) -> f64 {
+    pub(crate) fn draw(&self, rng: &mut Rng) -> f64 {
         let u = rng.uniform();
         let k = self.cdf.partition_point(|&c| c < u).min(GRID - 1);
         let (a, b) = (self.edge[k], self.edge[k + 1]);
