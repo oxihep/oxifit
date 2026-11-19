@@ -109,6 +109,13 @@ impl Simultaneous {
         let mut model = Model::new("simultaneous", &[], params, |_, _| 0.0);
         model.param_names = names;
         model.constraints = constraints;
+        for ch in &self.channels {
+            for u in &ch.model.unknown {
+                if !model.unknown.contains(u) {
+                    model.unknown.push(u.clone());
+                }
+            }
+        }
         (model, maps)
     }
 

@@ -177,3 +177,41 @@ fn a_constraint_carries_into_a_sum() {
     );
     assert_eq!(fit.ndf, 100 + 1 - 4);
 }
+
+#[test]
+fn a_misspelled_parameter_name_makes_the_fit_invalid() {
+    use oxifit::{FitError, Simultaneous};
+    let data = Points::new(&[0.0, 1.0, 2.0], &[1.0, 3.0, 5.0], &[0.1; 3]).unwrap();
+    let line = Model::polynomial("l", 1).with_params(vec![0.0, 1.0]);
+    assert!(line.check().is_ok() && data.fit(&line).valid);
+
+    // Every per-parameter setter records a name the model does not have.
+    for typo in [
+        line.clone().limit("p3", 0.0, 1.0),
+        line.clone().lower_limit("slope", 0.0),
+        line.clone().upper_limit("P1", 1.0),
+        line.clone().fix("p 0"),
+        line.clone().step("q", 0.1),
+        line.clone().constrain("pp1", 2.0, 0.1),
+    ] {
+        let err = typo.check().unwrap_err();
+        assert!(matches!(err, FitError::UnknownParameter(_)), "{err:?}");
+        assert!(
+            !data.fit(&typo).valid,
+            "a fit with a typo is not the fit asked for"
+        );
+    }
+    assert_eq!(
+        line.clone().fix("slope").check(),
+        Err(FitError::UnknownParameter("slope".into()))
+    );
+    // Carried into a sum, a simultaneous fit, and the scans.
+    let bad = line.clone().fix("slope");
+    assert!((bad.clone() + Model::polynomial("c", 0)).check().is_err());
+    let sim = Simultaneous::new().channel("A", &data, &bad, &FitOptions::new());
+    assert!(!sim.fit(&FitOptions::new()).valid);
+    assert_eq!(
+        data.profile(&bad, &FitOptions::new(), "p1", (1.0, 3.0), 5),
+        Err(FitError::UnknownParameter("slope".into()))
+    );
+}

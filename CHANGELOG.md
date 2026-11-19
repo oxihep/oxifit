@@ -6,6 +6,20 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A misspelled parameter name no longer passes silently.** `limit`,
+  `lower_limit`, `upper_limit`, `fix`, `step` and `constrain` used to ignore
+  a name the model does not have, so a typo gave a different fit than the
+  one asked for. The model now records such names: `Model::check()` reports
+  the first as `FitError::UnknownParameter`, a fit of the model is invalid,
+  and profiles and contours return the error. This carries through sums and
+  simultaneous fits.
+- **Nelder–Mead holds limits exactly.** It now moves in Minuit's internal
+  coordinates (a sine transform for two limits, a square root for one)
+  instead of adding a `1e30·d²` penalty outside them. On a fit pinned at a
+  limit it lands on the exact constrained minimum.
+
 ## [0.4.1]
 
 ### Fixed
