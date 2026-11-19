@@ -16,6 +16,8 @@ pub(crate) struct Constraint {
     pub(crate) upper: Option<f64>,
     pub(crate) fixed: bool,
     pub(crate) step: Option<f64>,
+    /// A Gaussian constraint `(mean, sigma)`: the fit adds `((p − mean)/sigma)²`.
+    pub(crate) gauss: Option<(f64, f64)>,
 }
 
 /// A parametric fit function: a closure `f(x, params)` plus named parameters
@@ -33,6 +35,9 @@ pub struct Model {
     /// Per-parameter constraints (limits / fixed / step), one per parameter.
     pub(crate) constraints: Vec<Constraint>,
     pub(crate) func: ModelFn,
+    /// For a sum ([`Model::sum`]): its parts' names, in order, so `+` can
+    /// append to it rather than nest it.
+    pub(crate) parts: Option<Vec<String>>,
 }
 
 impl Model {
@@ -50,6 +55,7 @@ impl Model {
             params,
             constraints,
             func: std::sync::Arc::new(func),
+            parts: None,
         }
     }
 
@@ -113,6 +119,93 @@ impl Model {
         if let Some(i) = self.index_of(name) {
             self.constraint_mut(i).step = Some(step);
         }
+        self
+    }
+
+    /// Constrain parameter `name` with a Gaussian of `mean` and `sigma` — an
+    /// external measurement of it, or a nuisance parameter's prior. The fit
+    /// adds `((p − mean)/sigma)²` to its cost (a χ² term, or `−2 ln` of the
+    /// Gaussian for a likelihood) and counts the constraint as one more
+    /// measurement in `ndf`. A non-positive `sigma` removes the constraint; a
+    /// fixed parameter's constraint has no effect.
+    ///
+    /// ```
+    /// # use oxifit::{FitExt, Model, Points};
+    /// // The data say 10 ± 1; an earlier measurement said 12 ± 1.
+    /// let data = Points::new(&[0.0], &[10.0], &[1.0])?;
+    /// let c = Model::polynomial("c", 0).with_params(vec![0.0]).constrain("p0", 12.0, 1.0);
+    /// let fit = data.fit(&c);
+    /// assert!((fit.params[0] - 11.0).abs() < 1e-3); // the weighted average
+    /// # Ok::<(), oxifit::StatError>(())
+    /// ```
+    #[must_use]
+    pub fn constrain(mut self, name: &str, mean: f64, sigma: f64) -> Model {
+        if let Some(i) = self.index_of(name) {
+            self.constraint_mut(i).gauss = (sigma > 0.0).then_some((mean, sigma));
+        }
+        self
+    }
+
+    /// The sum of several models, `f(x) = Σ fₖ(x)` — a signal on a background,
+    /// several peaks. Its parameters are every part's, in order, each named
+    /// `part.param` after its part's [`name`](Self::name) (`"sig.mean"`,
+    /// `"bkg.slope"`); a part whose name repeats an earlier one's is numbered
+    /// (`"g"`, `"g_2"`, …). Each part keeps its seeds, limits, fixed
+    /// parameters, steps and constraints. `a + b` is the same as
+    /// `Model::sum("a+b", &[&a, &b])`.
+    ///
+    /// ```
+    /// # use oxifit::Model;
+    /// let sig = Model::gaussian("sig").with_params(vec![50.0, 91.2, 2.5]);
+    /// let bkg = Model::exponential("bkg").with_params(vec![3.0, -0.02]);
+    /// let model = Model::sum("z", &[&sig, &bkg]).lower_limit("sig.sigma", 0.0);
+    /// assert_eq!(model.param_names[1], "sig.mean");
+    /// assert_eq!(model.param_names[4], "bkg.slope");
+    /// assert!((model.eval(91.2) - (50.0 + bkg.eval(91.2))).abs() < 1e-12);
+    /// ```
+    pub fn sum(name: &str, parts: &[&Model]) -> Model {
+        let empty = Model {
+            name: name.to_string(),
+            param_names: Vec::new(),
+            params: Vec::new(),
+            constraints: Vec::new(),
+            func: std::sync::Arc::new(|_, _| 0.0),
+            parts: Some(Vec::new()),
+        };
+        parts.iter().fold(empty, |sum, part| sum.push_part(part))
+    }
+
+    /// Append `part` to this sum: its parameters (prefixed with its name,
+    /// numbered when the name repeats) and its term.
+    fn push_part(mut self, part: &Model) -> Model {
+        let names = self.parts.get_or_insert_with(Vec::new);
+        let base = part.name.clone();
+        let count = names.iter().filter(|n| **n == base).count();
+        names.push(base.clone());
+        let prefix = if count == 0 {
+            base
+        } else {
+            format!("{base}_{}", count + 1)
+        };
+        let offset = self.params.len();
+        let n = part.params.len();
+        // Constraints line up with the parameters (a `with_params` may have
+        // left the vector shorter).
+        self.constraints.resize(offset, Constraint::default());
+        for k in 0..n {
+            let pname = part
+                .param_names
+                .get(k)
+                .map_or_else(|| format!("p{k}"), Clone::clone);
+            self.param_names.push(format!("{prefix}.{pname}"));
+            self.constraints
+                .push(part.constraints.get(k).copied().unwrap_or_default());
+        }
+        self.params.extend_from_slice(&part.params);
+        let (head, tail) = (self.func.clone(), part.func.clone());
+        self.func = std::sync::Arc::new(move |x, p| {
+            head(x, &p[..offset]) + tail(x, &p[offset..offset + n])
+        });
         self
     }
 
@@ -303,6 +396,23 @@ impl Model {
             self.params[2] = sigma;
         }
         self
+    }
+}
+
+/// `a + b` is [`Model::sum`]`("a+b", &[&a, &b])`, the parts' parameters
+/// named `a.…` and `b.…`. Adding to a sum appends a part, so `a + b + c` is
+/// `Model::sum("a+b+c", &[&a, &b, &c])`.
+impl std::ops::Add for Model {
+    type Output = Model;
+    fn add(self, rhs: Model) -> Model {
+        let lhs = if self.parts.is_some() {
+            self
+        } else {
+            Model::sum(&self.name.clone(), &[&self])
+        };
+        let mut sum = lhs.push_part(&rhs);
+        sum.name = format!("{}+{}", sum.name, rhs.name);
+        sum
     }
 }
 

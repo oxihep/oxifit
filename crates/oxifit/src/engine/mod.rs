@@ -40,7 +40,7 @@ pub(crate) struct Fit<'a> {
     pub(crate) residuals: &'a dyn Fn(&[f64], &mut [f64]),
     /// How many residuals there are.
     pub(crate) n_residuals: usize,
-    /// Degrees of freedom: fitted points − free parameters.
+    /// Degrees of freedom: fitted points + constraints − free parameters.
     pub(crate) ndf: usize,
     /// The fit options (strategy, tolerance, HESSE, MINOS, …).
     pub(crate) opts: &'a FitOptions,
@@ -109,9 +109,22 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
         .filter(|&i| !model.constraints.get(i).map(|c| c.fixed).unwrap_or(false))
         .count();
 
-    // Too few data points to determine the free parameters: report failure
+    // Gaussian constraints on free parameters: `(index, mean, sigma)`. Each is
+    // an auxiliary measurement — a term in the cost, a residual, and a point
+    // in `ndf`.
+    let penalties: Vec<(usize, f64, f64)> = model
+        .constraints
+        .iter()
+        .take(np)
+        .enumerate()
+        .filter(|(_, c)| !c.fixed)
+        .filter_map(|(i, c)| c.gauss.map(|(m, s)| (i, m, s)))
+        .collect();
+    let n_meas = points.len() + penalties.len();
+
+    // Too few measurements to determine the free parameters: report failure
     // rather than a meaningless minimum of a flat cost.
-    if np == 0 || points.len() < n_free.max(1) {
+    if np == 0 || n_meas < n_free.max(1) {
         return failed(model);
     }
 
@@ -127,7 +140,7 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
         };
         fs * fs
     };
-    let cost = |p: &[f64]| -> f64 {
+    let data_cost = |p: &[f64]| -> f64 {
         match method {
             FitMethod::Chi2 => points
                 .iter()
@@ -155,6 +168,11 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
         }
     };
 
+    let pull = |p: &[f64], &(i, m, sd): &(usize, f64, f64)| (p[i] - m) / sd;
+    let cost = |p: &[f64]| -> f64 {
+        data_cost(p) + penalties.iter().map(|c| pull(p, c).powi(2)).sum::<f64>()
+    };
+
     // The same cost as residuals whose squares sum to it, for least-squares
     // backends: (y − f)/σ for χ², with a robust loss as √ρ, and the signed
     // deviance residual √(2·[f − y + y·ln(y/f)]) for the likelihood.
@@ -177,6 +195,9 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
                 }
             };
         }
+        for (o, c) in out[points.len()..].iter_mut().zip(&penalties) {
+            *o = pull(p, c);
+        }
     };
 
     // Count every cost evaluation, whichever backend makes it (a residual
@@ -194,8 +215,8 @@ pub(crate) fn run_fit(all: &[Point], model: &Model, opts: &FitOptions) -> FitRes
         model,
         cost: &counted,
         residuals: &counted_residuals,
-        n_residuals: points.len(),
-        ndf: points.len() - n_free,
+        n_residuals: n_meas,
+        ndf: n_meas - n_free,
         opts,
         // A robust loss is ignored by the likelihood, so only it changes the
         // meaning of the least-squares costs.

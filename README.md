@@ -32,6 +32,10 @@ println!("slope = {:.3} ± {:.3}", fit.params[1], fit.errors[1]);
 Models come from a closure, a built-in shape (Gaussian, exponential,
 polynomial, Crystal Ball, Breit–Wigner, Voigt, Novosibirsk, ARGUS, …) or any
 formula string (`Model::from_formula("f", "[0]*exp(-0.5*((x-[1])/[2])^2)")`).
+Add models to fit a signal on a background (`sig + bkg`, or `Model::sum`;
+parameters become `sig.mean`, `bkg.slope`, …), and constrain a parameter
+with a Gaussian — an external measurement or a nuisance prior — with
+`.constrain("bkg.slope", -0.02, 0.005)`.
 
 ## Minimizers
 
