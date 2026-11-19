@@ -67,7 +67,7 @@ impl Simultaneous {
     ) -> Simultaneous {
         self.channels.push(Channel {
             name: name.to_string(),
-            points: data.points_nd(),
+            points: crate::data::engine_points(data),
             dim: data.dim(),
             model: model.clone(),
             opts: *opts,

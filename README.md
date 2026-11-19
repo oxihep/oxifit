@@ -190,6 +190,23 @@ size, where SumW2 and the naive errors are not — on the `splot_lifetime`
 example's toys the pull widths are 1.00 (asymptotic), 1.37 (naive) and 1.46
 (SumW2).
 
+## Bin-integrated fits and efficiencies
+
+`FitOptions::with_bin_integration(true)` compares each bin with the model
+averaged over the bin rather than its value at the bin center (ROOT's option
+`"I"`, iminuit's `BinnedNLL`) — what matters when the model curves within a
+bin. The bins come from the data's `bin_edges` (`Points::with_bin_edges` for
+variable widths), else halfway between neighbouring centers. On the
+comparison's peak rebinned to 0.5-wide bins it moves the fitted width from
+0.613 to 0.596 (generated: 0.6), exactly as ROOT does.
+
+`Efficiency::new(&x, &passed, &total)` (or `Efficiency::events(&x, &accepted)`
+for single events) fits an efficiency curve with the **binomial likelihood**
+(ROOT's `TEfficiency::Fit`, RooFit's `RooEfficiency`), right where a χ² with
+binomial errors fails: efficiencies near 0 or 1 and bins with few trials.
+`BinomialCost` is the same as a `Cost`, with Asimov data and toys. Both match
+ROOT 6.40 (`tests/bins_efficiency.rs`).
+
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,
@@ -232,6 +249,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`peak_search`](crates/oxifit/examples/peak_search.rs) | A narrow peak at an unknown mass: MIGRAD from a blind seed misses it, multistart, differential evolution and CMA-ES find it |
 | [`template_fit`](crates/oxifit/examples/template_fit.rs) | A HistFactory-style search: signal, top and W+jets templates in a signal and a control region, with normalization, jet-energy-scale, MC-statistics and luminosity uncertainties — pre/post-fit yields, MINOS, pulls, the impact ranking, significance and the CLs limit with its band, checked with toys |
 | [`splot_lifetime`](crates/oxifit/examples/splot_lifetime.rs) | A B⁰ lifetime from sWeights: an extended mass fit, the weights, a weighted decay-time fit with naive, SumW2 and asymptotic errors, and 300 toys showing only the asymptotic ones cover |
+| [`tag_and_probe`](crates/oxifit/examples/tag_and_probe.rs) | A trigger efficiency by tag and probe: simultaneous pass/fail Z fits per probe-pT bin (ε a shared parameter, MINOS errors), a bin-averaged turn-on fit, and toys of binomial vs χ² efficiency fits |
 | [`resonance_search`](crates/oxifit/examples/resonance_search.rs) | A complete bump hunt: background-function choice (likelihood-ratio test) and its spurious signal, local significance vs mass, the look-elsewhere correction from toy scans, the signal fit, and CLs limits with the expected band, cross-checked with toys (`--release`: a few seconds) |
 
 ## Compared with ROOT, iminuit, scipy and zfit

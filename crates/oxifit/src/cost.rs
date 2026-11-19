@@ -283,7 +283,7 @@ impl ModelCost {
     /// The cost of fitting `data` with `model` under `opts` (its method,
     /// ranges and loss; the minimizer settings are the [`Fitter`](crate::Fitter)'s).
     pub fn new(data: &(impl FitDataNd + ?Sized), model: &Model, opts: &FitOptions) -> ModelCost {
-        ModelCost::from_points(data.points_nd(), data.dim(), model, opts)
+        ModelCost::from_points(crate::data::engine_points(data), data.dim(), model, opts)
     }
 
     pub(crate) fn from_points(

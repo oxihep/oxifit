@@ -338,9 +338,80 @@ pub(crate) struct Prepared {
     region: Vec<(f64, f64)>,
     sum_w: f64,
     sum_w2: f64,
+    /// Binned fits of 1-D data: the model averaged over each bin, whose
+    /// edges ride in each point's `at[1]`, `at[2]` (ROOT's option `"I"`).
+    integrate: bool,
+}
+
+/// Gauss–Legendre nodes and weights on [−1, 1], 8 points: exact for
+/// polynomials to degree 15, ample across one bin of a smooth model.
+const GL8: [(f64, f64); 8] = [
+    (-0.960_289_856_497_536_2, 0.101_228_536_290_376_26),
+    (-0.796_666_477_413_626_7, 0.222_381_034_453_374_47),
+    (-0.525_532_409_916_329, 0.313_706_645_877_887_3),
+    (-0.183_434_642_495_649_8, 0.362_683_783_378_362),
+    (0.183_434_642_495_649_8, 0.362_683_783_378_362),
+    (0.525_532_409_916_329, 0.313_706_645_877_887_3),
+    (0.796_666_477_413_626_7, 0.222_381_034_453_374_47),
+    (0.960_289_856_497_536_2, 0.101_228_536_290_376_26),
+];
+
+/// Attach 1-D bin edges to points (`at[1]`, `at[2]`), as the engine reads
+/// them for bin-integrated fits; points without edges are left as they are.
+pub(crate) fn attach_edges(
+    mut points: Vec<PointNd>,
+    edges: Option<Vec<(f64, f64)>>,
+) -> Vec<PointNd> {
+    if let Some(edges) = edges
+        && edges.len() == points.len()
+    {
+        for (p, (lo, hi)) in points.iter_mut().zip(edges) {
+            p.at[1] = lo;
+            p.at[2] = hi;
+        }
+    }
+    points
 }
 
 impl Prepared {
+    /// The model's prediction for a point: its value at `x`, or for a
+    /// bin-integrated fit its average over the bin.
+    fn at(&self, x: &[f64; 3], p: &[f64]) -> f64 {
+        if !self.integrate {
+            return (self.func)(&x[..self.dim], p);
+        }
+        let (lo, hi) = (x[1], x[2]);
+        if let Some(i) = self.integral.as_deref() {
+            return i(p, &[(lo, hi)]) / (hi - lo);
+        }
+        let (mid, half) = (0.5 * (lo + hi), 0.5 * (hi - lo));
+        0.5 * GL8
+            .iter()
+            .map(|&(t, w)| w * (self.func)(&[mid + half * t], p))
+            .sum::<f64>()
+    }
+
+    /// The model's gradient for a point (added into `g`, which the caller
+    /// zeroes): at `x`, or averaged over the bin.
+    fn grad_at(&self, x: &[f64; 3], p: &[f64], g: &mut [f64]) {
+        let Some(grad) = self.grad.as_deref() else {
+            return;
+        };
+        if !self.integrate {
+            grad(&x[..self.dim], p, g);
+            return;
+        }
+        let (mid, half) = (0.5 * (x[1] + x[2]), 0.5 * (x[2] - x[1]));
+        let mut one = vec![0.0; g.len()];
+        for &(t, w) in &GL8 {
+            one.iter_mut().for_each(|v| *v = 0.0);
+            grad(&[mid + half * t], p, &mut one);
+            for (gk, ok) in g.iter_mut().zip(&one) {
+                *gk += 0.5 * w * ok;
+            }
+        }
+    }
+
     /// Select the points of `all` (of `dim` variables) that enter a fit under
     /// `opts`: those inside `opts.range` (and `range_y`, `range_z`; default:
     /// all), and for Neyman χ² only those with an error.
@@ -376,6 +447,46 @@ impl Prepared {
                 })
             })
             .collect();
+        let unbinned = matches!(
+            opts.method,
+            FitMethod::UnbinnedLikelihood | FitMethod::ExtendedUnbinnedLikelihood
+        );
+        let integrate = opts.integrate && dim == 1 && !unbinned;
+        let mut points = points;
+        if integrate
+            && points
+                .iter()
+                .any(|p| p.0[2].partial_cmp(&p.0[1]) != Some(std::cmp::Ordering::Greater))
+        {
+            // No edges given: bins between the midpoints of neighbouring
+            // centers (exact for uniform binning), the outer ones mirrored.
+            let mut xs: Vec<f64> = all.iter().map(|p| p.at[0]).collect();
+            xs.sort_by(f64::total_cmp);
+            xs.dedup();
+            let half = |i: usize| -> (f64, f64) {
+                let x = xs[i];
+                let left = if i > 0 {
+                    x - xs[i - 1]
+                } else if xs.len() > 1 {
+                    xs[1] - x
+                } else {
+                    1.0
+                };
+                let right = if i + 1 < xs.len() {
+                    xs[i + 1] - x
+                } else {
+                    left
+                };
+                (x - 0.5 * left, x + 0.5 * right)
+            };
+            for p in &mut points {
+                if let Ok(i) = xs.binary_search_by(|v| v.total_cmp(&p.0[0])) {
+                    let (lo, hi) = half(i);
+                    p.0[1] = lo;
+                    p.0[2] = hi;
+                }
+            }
+        }
         let (sum_w, sum_w2) = points
             .iter()
             .fold((0.0, 0.0), |(a, b), p| (a + p.1, b + p.1 * p.1));
@@ -396,6 +507,7 @@ impl Prepared {
             region,
             sum_w,
             sum_w2,
+            integrate,
         }
     }
 
@@ -451,21 +563,19 @@ impl Prepared {
 
     /// The cost at parameters `p`.
     pub(crate) fn cost(&self, p: &[f64]) -> f64 {
-        let func = &*self.func;
-        let dim = self.dim;
         let (loss, fs2) = (self.loss, self.fs2);
         match self.method {
             FitMethod::Chi2 => chunked_sum(&self.points, |&(x, y, e)| {
-                let d = (y - func(&x[..dim], p)) / e;
+                let d = (y - self.at(&x, p)) / e;
                 robust(d * d, loss, fs2)
             }),
             FitMethod::PearsonChi2 => chunked_sum(&self.points, |&(x, y, _)| {
-                let f = func(&x[..dim], p).max(1e-300); // expected (model) variance
+                let f = self.at(&x, p).max(1e-300); // expected (model) variance
                 robust((y - f) * (y - f) / f, loss, fs2)
             }),
             FitMethod::Likelihood => {
                 2.0 * chunked_sum(&self.points, |&(x, y, _)| {
-                    let f = func(&x[..dim], p).max(1e-300);
+                    let f = self.at(&x, p).max(1e-300);
                     if y > 0.0 { f - y + y * (y / f).ln() } else { f }
                 })
             }
@@ -486,16 +596,14 @@ impl Prepared {
     /// unbinned likelihoods the normalization's `∂(∫f)/∂p`. A no-op without
     /// a model gradient.
     pub(crate) fn add_gradient(&self, p: &[f64], out: &mut [f64]) {
-        let Some(grad) = self.grad.as_deref() else {
+        if self.grad.is_none() {
             return;
-        };
-        let func = &*self.func;
-        let dim = self.dim;
+        }
         let np = p.len();
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
         // d(cost term)/df at a point (0 where the model was clamped).
         let slope = |x: [f64; 3], y: f64, e: f64| -> f64 {
-            let raw = func(&x[..dim], p);
+            let raw = self.at(&x, p);
             match method {
                 FitMethod::Chi2 => {
                     let d = (y - raw) / e;
@@ -529,7 +637,7 @@ impl Prepared {
                 let c = slope(x, y, e);
                 if c != 0.0 {
                     g.iter_mut().for_each(|v| *v = 0.0);
-                    grad(&x[..dim], p, g);
+                    self.grad_at(&x, p, g);
                     for (a, gk) in acc.iter_mut().zip(g.iter()) {
                         *a += c * gk;
                     }
@@ -556,14 +664,12 @@ impl Prepared {
     /// derivative in `f` taken exactly — including its limit where the
     /// residual vanishes. A no-op without a model gradient or residuals.
     pub(crate) fn residual_jacobian(&self, p: &[f64], out: &mut [f64]) {
-        let Some(grad) = self.grad.as_deref() else {
+        if self.grad.is_none() {
             return;
-        };
+        }
         if self.n_residuals() == 0 {
             return;
         }
-        let func = &*self.func;
-        let dim = self.dim;
         let np = p.len();
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
         // dr/dd for r = sign(d)·√ρ(d²): ρ'(d²)·|d|/√ρ(d²), → 1 as d → 0.
@@ -576,7 +682,7 @@ impl Prepared {
             }
         };
         let dr_df = |x: [f64; 3], y: f64, e: f64| -> f64 {
-            let raw = func(&x[..dim], p);
+            let raw = self.at(&x, p);
             match method {
                 FitMethod::Chi2 => -robust_dr((y - raw) / e) / e,
                 FitMethod::PearsonChi2 => {
@@ -612,7 +718,7 @@ impl Prepared {
         for (row, &(x, y, e)) in out.chunks_mut(np).zip(&self.points) {
             let c = dr_df(x, y, e);
             g.iter_mut().for_each(|v| *v = 0.0);
-            grad(&x[..dim], p, &mut g);
+            self.grad_at(&x, p, &mut g);
             for (o, gk) in row.iter_mut().zip(&g) {
                 *o = c * gk;
             }
@@ -735,21 +841,19 @@ impl Prepared {
     /// residual √(2·[f − y + y·ln(y/f)]) for the binned likelihood. `out`
     /// holds [`n_residuals`](Self::n_residuals) values.
     pub(crate) fn residuals(&self, p: &[f64], out: &mut [f64]) {
-        let func = &*self.func;
-        let dim = self.dim;
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
         let residual = |&(x, y, e): &NdPoint| match method {
             FitMethod::Chi2 => {
-                let d = (y - func(&x[..dim], p)) / e;
+                let d = (y - self.at(&x, p)) / e;
                 robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
             }
             FitMethod::PearsonChi2 => {
-                let f = func(&x[..dim], p).max(1e-300);
+                let f = self.at(&x, p).max(1e-300);
                 let d = (y - f) / f.sqrt();
                 robust(d * d, loss, fs2).max(0.0).sqrt().copysign(d)
             }
             FitMethod::Likelihood => {
-                let f = func(&x[..dim], p).max(1e-300);
+                let f = self.at(&x, p).max(1e-300);
                 let t = if y > 0.0 { f - y + y * (y / f).ln() } else { f };
                 (2.0 * t).max(0.0).sqrt().copysign(f - y)
             }

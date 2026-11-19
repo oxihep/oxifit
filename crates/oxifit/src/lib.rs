@@ -40,6 +40,7 @@
 
 mod cost;
 mod data;
+mod efficiency;
 mod engine;
 mod fitter;
 mod inference;
@@ -56,6 +57,7 @@ pub use cost::{Cost, CostSum, FnCost, ModelCost};
 pub use data::{
     Events, Events2, Events3, FitData, FitDataNd, FitExt, Point, PointNd, Points, Points2, Points3,
 };
+pub use efficiency::{BinomialCost, Efficiency};
 pub use fitter::Fitter;
 pub use inference::{
     Cls, Discovery, HypoTest, TestStatistic, ToyCls, ToyDiscovery, UpperLimit, global_significance,

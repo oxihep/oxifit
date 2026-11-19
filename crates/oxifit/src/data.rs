@@ -38,6 +38,15 @@ impl Point {
 pub trait FitData {
     /// The data as `(x, y, sigma)` points.
     fn points(&self) -> Vec<Point>;
+
+    /// Each point's bin `(lo, hi)`, for data that are bins of a histogram —
+    /// used by bin-integrated fits
+    /// ([`FitOptions::with_bin_integration`](crate::FitOptions::with_bin_integration)).
+    /// `None` (the default): the bins are taken halfway between neighbouring
+    /// points.
+    fn bin_edges(&self) -> Option<Vec<(f64, f64)>> {
+        None
+    }
 }
 
 /// A standalone dataset of raw `(x, y, sigma)` points — for fitting data that is
@@ -45,6 +54,7 @@ pub trait FitData {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Points {
     points: Vec<Point>,
+    edges: Option<Vec<(f64, f64)>>,
 }
 
 impl Points {
@@ -62,7 +72,10 @@ impl Points {
             .zip(sigma)
             .map(|((&x, &y), &s)| Point::new(x, y, s))
             .collect();
-        Ok(Points { points })
+        Ok(Points {
+            points,
+            edges: None,
+        })
     }
 
     /// Build from `x`/`y` with unit (unweighted) errors — an ordinary
@@ -77,13 +90,32 @@ impl Points {
             .zip(y)
             .map(|(&x, &y)| Point::new(x, y, 1.0))
             .collect();
-        Ok(Points { points })
+        Ok(Points {
+            points,
+            edges: None,
+        })
     }
 
     /// Build directly from [`Point`]s.
     #[must_use]
     pub fn from_points(points: Vec<Point>) -> Points {
-        Points { points }
+        Points {
+            points,
+            edges: None,
+        }
+    }
+
+    /// Histogram bins: `edges` (one more than the points) are the bins'
+    /// boundaries, for bin-integrated fits
+    /// ([`FitOptions::with_bin_integration`](crate::FitOptions::with_bin_integration))
+    /// of variable-width bins.
+    ///
+    /// # Errors
+    /// [`StatError::LengthMismatch`] unless there is one more edge than points.
+    pub fn with_bin_edges(mut self, edges: &[f64]) -> Result<Points, StatError> {
+        paired(self.points.len() + 1, edges.len())?;
+        self.edges = Some(edges.windows(2).map(|w| (w[0], w[1])).collect());
+        Ok(self)
     }
 
     /// The points.
@@ -96,6 +128,9 @@ impl Points {
 impl FitData for Points {
     fn points(&self) -> Vec<Point> {
         self.points.clone()
+    }
+    fn bin_edges(&self) -> Option<Vec<(f64, f64)>> {
+        self.edges.clone()
     }
 }
 
@@ -213,7 +248,7 @@ pub trait FitExt: FitDataNd {
     /// `FitResult::chi2` is the cost at the minimum.
     #[must_use]
     fn fit_opts(&self, model: &Model, opts: &FitOptions) -> FitResult {
-        run_fit(&self.points_nd(), self.dim(), model, opts)
+        run_fit(&engine_points(self), self.dim(), model, opts)
     }
 
     /// Fit `model` (per `opts`) and write the best-fit parameters back into it,
@@ -259,7 +294,7 @@ pub trait FitExt: FitDataNd {
         n: usize,
     ) -> Result<Profile, FitError> {
         scan::check_dim(model, self.dim())?;
-        let data = self.points_nd();
+        let data = engine_points(self);
         let refit = scan::DataRefit {
             data: &data,
             dim: self.dim(),
@@ -287,7 +322,7 @@ pub trait FitExt: FitDataNd {
         npoints: usize,
     ) -> Result<Contour, FitError> {
         scan::check_dim(model, self.dim())?;
-        let data = self.points_nd();
+        let data = engine_points(self);
         let refit = scan::DataRefit {
             data: &data,
             dim: self.dim(),
@@ -297,6 +332,12 @@ pub trait FitExt: FitDataNd {
 }
 
 impl<T: FitDataNd + ?Sized> FitExt for T {}
+
+/// The points as the engine takes them: with their bins attached, when the
+/// data have bin edges.
+pub(crate) fn engine_points(data: &(impl FitDataNd + ?Sized)) -> Vec<PointNd> {
+    crate::engine::attach_edges(data.points_nd(), data.bin_edges_nd())
+}
 
 /// A data point in one to three dimensions: the variables `at` (unused
 /// trailing entries are 0), a value, and its uncertainty — as
@@ -330,6 +371,10 @@ pub trait FitDataNd {
     fn dim(&self) -> usize;
     /// The data as points.
     fn points_nd(&self) -> Vec<PointNd>;
+    /// For 1-D histogram data, each point's bin (see [`FitData::bin_edges`]).
+    fn bin_edges_nd(&self) -> Option<Vec<(f64, f64)>> {
+        None
+    }
 }
 
 impl<T: FitData + ?Sized> FitDataNd for T {
@@ -341,6 +386,9 @@ impl<T: FitData + ?Sized> FitDataNd for T {
             .into_iter()
             .map(|p| PointNd::new([p.x, 0.0, 0.0], p.y, p.sigma))
             .collect()
+    }
+    fn bin_edges_nd(&self) -> Option<Vec<(f64, f64)>> {
+        self.bin_edges()
     }
 }
 
