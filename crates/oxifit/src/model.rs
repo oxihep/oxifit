@@ -4,6 +4,9 @@
 
 use crate::data::{FitData, Point};
 
+/// The most intervals one convolution integral may use.
+const CONV_INTERVALS: usize = 200;
+
 /// A model evaluator: `f(x, params) -> y`. `Send + Sync` so a [`Model`] can cross
 /// thread boundaries (e.g. be shared by a parallel fit); an `Arc` so [`Model`] is
 /// cheaply `Clone` (clones share the immutable closure).
@@ -272,6 +275,98 @@ impl Model {
             _ => None,
         };
         self
+    }
+
+    /// The convolution `(f ⊗ g)(x) = ∫ f(x − t)·g(t) dt` of `signal` with
+    /// `resolution` — a lifetime smeared by vertex resolution, a resonance by
+    /// detector resolution (RooFit's `RooFFTConvPdf`). `window` is the range
+    /// of `t` the resolution covers (±5–8 of its widths); `g` should be
+    /// normalized to unit area (e.g. [`normal`](Self::normal)) so the
+    /// convolution keeps `signal`'s area.
+    ///
+    /// Each evaluation integrates numerically over the window (bounded,
+    /// adaptive Gauss–Kronrod, so a step such as a decay starting at `t = 0` is
+    /// handled), which costs a few hundred evaluations of the two models. The
+    /// parameters are `signal`'s then `resolution`'s, named after them as in a
+    /// [`sum`](Self::sum) (`decay.tau`, `res.sigma`); each keeps its seeds,
+    /// limits and constraints. With analytic gradients on both, the
+    /// convolution has one too.
+    ///
+    /// ```
+    /// # use oxifit::Model;
+    /// let decay = Model::new("decay", &["n", "tau"], vec![1.0, 1.5], |t, p| {
+    ///     if t < 0.0 { 0.0 } else { p[0] / p[1] * (-t / p[1]).exp() }
+    /// });
+    /// let res = Model::normal("res").with_params(vec![0.0, 0.1]);
+    /// let smeared = Model::convolve("measured", &decay, &res, (-1.0, 1.0));
+    /// assert_eq!(smeared.param_names, ["decay.n", "decay.tau", "res.mean", "res.sigma"]);
+    /// // Smearing spreads the decay below t = 0.
+    /// assert!(smeared.eval(-0.05) > 0.0 && decay.eval(-0.05) == 0.0);
+    /// ```
+    pub fn convolve(name: &str, signal: &Model, resolution: &Model, window: (f64, f64)) -> Model {
+        // The parameters, names and constraints as for a two-part sum.
+        let mut m = Model::sum(name, &[signal, resolution]);
+        m.parts = None; // a convolution is not a sum: `+` must not append to it
+        let (lo, hi) = if window.0 <= window.1 {
+            window
+        } else {
+            (window.1, window.0)
+        };
+        let ns = signal.params.len();
+        let nr = resolution.params.len();
+        let (f, g) = (signal.func.clone(), resolution.func.clone());
+        let (fv, gv) = (f.clone(), g.clone());
+        m.func = std::sync::Arc::new(move |x, p| {
+            let (ps, pr) = p.split_at(ns);
+            let integrand = |t: f64| fv(x - t, ps) * gv(t, pr);
+            oxifit_formula::integrate_adaptive(integrand, lo, hi, 1e-10, CONV_INTERVALS).0
+        });
+        m.grad = match (signal.grad.clone(), resolution.grad.clone()) {
+            (Some(fg), Some(gg)) => Some(std::sync::Arc::new(move |x, p, out: &mut [f64]| {
+                let (ps, pr) = p.split_at(ns);
+                for (k, o) in out.iter_mut().enumerate().take(ns + nr) {
+                    let integrand = |t: f64| {
+                        if k < ns {
+                            let mut d = vec![0.0; ns];
+                            fg(x - t, ps, &mut d);
+                            d[k] * g(t, pr)
+                        } else {
+                            let mut d = vec![0.0; nr];
+                            gg(t, pr, &mut d);
+                            f(x - t, ps) * d[k - ns]
+                        }
+                    };
+                    *o = oxifit_formula::integrate_adaptive(
+                        integrand,
+                        lo,
+                        hi,
+                        1e-10,
+                        CONV_INTERVALS,
+                    )
+                    .0;
+                }
+            })),
+            _ => None,
+        };
+        m
+    }
+
+    /// A unit-area Gaussian density `exp(−½·((x − mean)/sigma)²)/(sigma·√(2π))`
+    /// — a resolution function for [`convolve`](Self::convolve), or a shape for
+    /// the unbinned likelihoods. Parameters `mean`, `sigma` (keep it positive:
+    /// `.lower_limit("sigma", 0.0)`); it has an analytic gradient.
+    pub fn normal(name: &str) -> Model {
+        let norm = 1.0 / std::f64::consts::TAU.sqrt();
+        Model::new(name, &["mean", "sigma"], vec![0.0, 1.0], move |x, p| {
+            let u = (x - p[0]) / p[1];
+            norm / p[1] * (-0.5 * u * u).exp()
+        })
+        .with_gradient(move |x, p, g| {
+            let u = (x - p[0]) / p[1];
+            let f = norm / p[1] * (-0.5 * u * u).exp();
+            g[0] = f * u / p[1];
+            g[1] = f * (u * u - 1.0) / p[1];
+        })
     }
 
     /// A Gaussian `[0]·exp(-½·((x-[1])/[2])²)` (ROOT's `"gaus"`); parameters are
