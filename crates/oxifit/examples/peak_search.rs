@@ -10,11 +10,7 @@
 //! evolution, CMA-ES) look over the whole mass window
 //! (the `limit` on `mean` is the search range) before MIGRAD polishes the
 //! answer, so they find it, at the price of many more cost evaluations.
-//!
-//! Some multistart runs may print a `min > max` panic message to stderr: a
-//! known bug in the numerical gradient of the `minuit2` 0.5 dependency, when a
-//! parameter is pressed against its limit. oxifit catches it and discards that
-//! start; the fit is unaffected. Run with:
+//! Run with:
 //!
 //! ```sh
 //! cargo run -p oxifit --example peak_search

@@ -276,7 +276,9 @@ fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
     // gradient can, from a poor seed). Report that as a failed fit rather than
     // unwinding into the caller. Nothing is shared across the boundary but the
     // read-only model and data, so a caught panic leaves no broken state
-    // behind. The default panic hook still prints the message to stderr.
+    // behind; that known minuit2 panic is also kept off stderr (see
+    // `quiet_known_panic`).
+    let _quiet = QuietKnownPanic::enter();
     catch_unwind(AssertUnwindSafe(|| match opts.minimizer {
         Minimizer::Minuit2 => minuit::run(fit, minuit::Local::Migrad),
         Minimizer::Minuit2Combined => minuit::run(fit, minuit::Local::Combined),
@@ -904,6 +906,52 @@ impl FitResult {
         }
         self.covariance = Some(v);
         self
+    }
+}
+
+/// The message of minuit2 0.5's numerical-gradient panic (`f64::clamp` with
+/// `min > max`), which oxifit catches and turns into an invalid fit or a
+/// discarded start.
+const KNOWN_PANIC: &str = "min > max, or either was NaN";
+
+thread_local! {
+    /// Whether this thread is inside an oxifit minimization.
+    static IN_MINIMIZATION: Cell<bool> = const { Cell::new(false) };
+}
+
+/// While alive, marks this thread as inside a minimization, so the known
+/// minuit2 panic — caught and handled — is not printed. Installs, once, a panic
+/// hook that drops exactly that message on a marked thread and hands every
+/// other panic (a bug in a model closure, a panic elsewhere in the program)
+/// to the hook that was there before.
+struct QuietKnownPanic {
+    was: bool,
+}
+
+impl QuietKnownPanic {
+    fn enter() -> QuietKnownPanic {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let known = IN_MINIMIZATION.with(Cell::get)
+                    && info
+                        .payload_as_str()
+                        .is_some_and(|m| m.contains(KNOWN_PANIC));
+                if !known {
+                    previous(info);
+                }
+            }));
+        });
+        QuietKnownPanic {
+            was: IN_MINIMIZATION.with(|f| f.replace(true)),
+        }
+    }
+}
+
+impl Drop for QuietKnownPanic {
+    fn drop(&mut self) {
+        IN_MINIMIZATION.with(|f| f.set(self.was));
     }
 }
 

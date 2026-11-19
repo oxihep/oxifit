@@ -6,6 +6,16 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **minuit2 0.5's numerical-gradient panic no longer prints.** oxifit
+  already caught it (an invalid fit, or a discarded start in a global
+  search), but the default panic hook still printed `min > max, or either
+  was NaN` each time — ten times in the `peak_search` example. A panic hook,
+  installed once, now drops exactly that message while the thread is inside
+  an oxifit minimization; every other panic, a bug in a model closure
+  included, still reaches the program's own hook.
+
 ## [0.6.0]
 
 ### Changed
