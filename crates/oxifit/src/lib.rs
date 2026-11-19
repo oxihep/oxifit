@@ -28,13 +28,19 @@
 //! (`Huber`/`SoftL1`/`Cauchy`/`Arctan` — `scipy.optimize.least_squares`'s `loss`)
 //! set via [`FitOptions::loss`].
 //!
+//! Any other `−2 ln L` or χ² — your own likelihood, a data fit plus external
+//! measurements ([`CostSum`]) — is a [`Cost`], minimized by a [`Fitter`] with
+//! the same minimizers, errors, MINOS, profiles and contours.
+//!
 //! The evaluable, persistable ROOT function objects (`TF1`/`TF2`/`TF3`) live in
 //! [`oxiroot_hist_func`](https://crates.io/crates/oxiroot-hist-func) (re-exported
 //! as `oxiroot::hist::{Func1D, Func2D, Func3D}`); with that crate's `fit` feature,
 //! `Func1D::to_model` converts one to a `Model` for fitting.
 
+mod cost;
 mod data;
 mod engine;
+mod fitter;
 mod model;
 mod result;
 mod rng;
@@ -42,9 +48,11 @@ mod scan;
 mod simultaneous;
 mod toys;
 
+pub use cost::{Cost, CostSum, FnCost, ModelCost};
 pub use data::{
     Events, Events2, Events3, FitData, FitDataNd, FitExt, Point, PointNd, Points, Points2, Points3,
 };
+pub use fitter::Fitter;
 pub use model::Model;
 /// The error [`Points::new`] and [`Points::unweighted`] return for inputs of
 /// different lengths (from `oxistats`).

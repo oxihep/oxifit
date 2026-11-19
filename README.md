@@ -102,6 +102,29 @@ categories, a mass seen in two decay modes. `.fit(&opts)` returns one
 `FitResult` over `param_names()`, and `channel_costs` splits the cost by
 channel (RooFit's `RooSimultaneous`).
 
+## Your own cost
+
+Any `−2 ln L` (or χ²) can be minimized with every minimizer above, HESSE,
+MINOS, profiles and contours — iminuit's `Minuit(fcn)`. A cost is anything
+that implements `Cost` (parameter names and a value, optionally a gradient);
+`FnCost` makes one from a closure, `ModelCost` turns a data fit into one, and
+`CostSum` adds costs, merging parameters by name. `Fitter` holds the seeds and
+the per-parameter settings:
+
+```rust
+use oxifit::{CostSum, FitOptions, FnCost, Fitter, ModelCost};
+
+let data_fit = ModelCost::new(&hist, &model, &FitOptions::new()); // as hist.fit_opts
+let external = FnCost::new(&["sigma"], |p| ((p[0] - 0.62) / 0.03).powi(2));
+let total = CostSum::new().with(data_fit).with(external);
+let fit = Fitter::new(&total, seeds)
+    .limit("sigma", 0.1, 2.0)
+    .fit(&FitOptions::new().with_minos(true));
+```
+
+`ModelCost::fitter()` starts from the model's own seeds and settings, so
+`ModelCost::new(&d, &m, &o).fitter().fit(&o)` is exactly `d.fit_opts(&m, &o)`.
+
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,

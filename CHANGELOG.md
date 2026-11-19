@@ -8,6 +8,16 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ### Added
 
+- **A public cost API.** The `Cost` trait — parameter names, a `−2 ln L` or
+  χ² value, optionally a gradient and a measurement count — and `Fitter`,
+  which minimizes any cost with every minimizer, HESSE, MINOS, profiles and
+  contours, with seeds, limits, fixed parameters, steps and Gaussian
+  constraints set by name (iminuit's `Minuit(fcn)`). `FnCost` makes a cost of
+  a closure (with an optional exact gradient), `ModelCost` makes one of a data
+  fit (`ModelCost::fitter` is exactly `fit_opts`), and `CostSum` adds costs,
+  merging parameters by name — a data fit plus an external measurement, or
+  several datasets with shared parameters.
+
 - **A comparison with ROOT, iminuit, scipy and zfit** (`comparison/`): the
   same data, models, seeds and costs fitted with each, with an agreement
   check, timings, and a side-by-side look at the code. Runs with
