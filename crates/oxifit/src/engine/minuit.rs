@@ -68,15 +68,31 @@ builder!(MnMigrad, MnSimplex);
 /// `start` (a full parameter vector), with the fit's strategy, tolerance and
 /// call limit.
 fn configure<B: Builder>(b: B, fit: &Fit, start: &[f64]) -> B {
+    configure_steps(b, fit, start, &[], fit.opts.strategy)
+}
+
+/// As [`configure`], with `steps[i]` (when `Some`) replacing parameter `i`'s
+/// default step, and Minuit2 strategy `strategy`.
+fn configure_steps<B: Builder>(
+    b: B,
+    fit: &Fit,
+    start: &[f64],
+    steps: &[Option<f64>],
+    strategy: u32,
+) -> B {
     let opts = fit.opts;
-    let mut b = b.with_strategy(opts.strategy).tolerance(opts.tolerance);
+    let mut b = b.with_strategy(strategy).tolerance(opts.tolerance);
     if let Some(max) = opts.max_fcn {
         b = b.max_fcn(max);
     }
     for (i, name) in fit.model.param_names.iter().enumerate() {
         let c = fit.constraint(i);
         let v = start[i];
-        let step = fit.step(i, v);
+        let step = steps
+            .get(i)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| fit.step(i, v));
         b = if c.fixed {
             b.add_const(name, v)
         } else {
@@ -117,7 +133,6 @@ pub(crate) fn local(fit: &Fit, start: &[f64], how: Local) -> FunctionMinimum {
     let cost = &fit.cost;
     match how {
         Local::Migrad => {
-            let migrad = configure(MnMigrad::new(), fit, start);
             match fit.grad {
                 // minuit2 0.5's analytic-gradient MIGRAD seeds its metric from
                 // the step sizes alone and can stall far from the minimum,
@@ -125,14 +140,24 @@ pub(crate) fn local(fit: &Fit, start: &[f64], how: Local) -> FunctionMinimum {
                 // curvature first) converges: fall back to it rather than
                 // let a gradient make a fit worse.
                 Some(grad) => {
-                    let min = migrad.minimize_grad(&WithGradient { fit, grad });
+                    // That metric is `diag(step²/2)`: steps from the cost's
+                    // curvature make it the right one from the start.
+                    let steps = curvature_steps(fit, grad, start);
+                    let min = configure_steps(
+                        MnMigrad::new(),
+                        fit,
+                        start,
+                        &steps,
+                        gradient_strategy(fit),
+                    )
+                    .minimize_grad(&WithGradient { fit, grad });
                     if min.is_valid() {
                         min
                     } else {
-                        migrad.minimize(cost)
+                        configure(MnMigrad::new(), fit, start).minimize(cost)
                     }
                 }
-                None => migrad.minimize(cost),
+                None => configure(MnMigrad::new(), fit, start).minimize(cost),
             }
         }
         // MIGRAD, then on failure SIMPLEX and MIGRAD again from its point —
@@ -151,6 +176,59 @@ pub(crate) fn local(fit: &Fit, start: &[f64], how: Local) -> FunctionMinimum {
     }
 }
 
+/// The Minuit2 strategy of the analytic-gradient MIGRAD. Strategy 1 makes
+/// MIGRAD verify an uncertain minimum with a numerical HESSE (about `2n²`
+/// cost calls); when [`finish`] will compute the Hessian from the gradient
+/// anyway (`2n` gradient calls) and verify the minimum with it, MIGRAD runs
+/// at strategy 0 and skips that HESSE.
+fn gradient_strategy(fit: &Fit) -> u32 {
+    if fit.opts.hesse && fit.opts.strategy == 1 {
+        0
+    } else {
+        fit.opts.strategy
+    }
+}
+
+/// For the analytic-gradient MIGRAD, whose starting metric comes from the
+/// step sizes alone: each free parameter without a step of its own gets the
+/// parabolic error `√(2/H_ii)` its curvature `H_ii` at `start` implies (a
+/// forward difference of the gradient — `n + 1` gradient calls), so the first
+/// line searches are well scaled. `None` where the curvature is not positive
+/// or the user set the step.
+fn curvature_steps(fit: &Fit, grad: super::GradCostFn<'_>, start: &[f64]) -> Vec<Option<f64>> {
+    let n = start.len();
+    let mut g0 = vec![0.0; n];
+    grad(start, &mut g0);
+    if g0.iter().any(|g| !g.is_finite()) {
+        return vec![None; n];
+    }
+    let mut g = vec![0.0; n];
+    (0..n)
+        .map(|i| {
+            let c = fit.constraint(i);
+            if c.fixed || c.step.is_some() {
+                return None;
+            }
+            let v = start[i];
+            let mut h = 1e-4 * fit.step(i, v);
+            if c.upper.is_some_and(|hi| v + h > hi) {
+                h = -h;
+            }
+            if c.lower.is_some_and(|lo| v + h < lo) {
+                return None;
+            }
+            let mut p = start.to_vec();
+            p[i] += h;
+            g.iter_mut().for_each(|x| *x = 0.0);
+            grad(&p, &mut g);
+            let h_ii = (g[i] - g0[i]) / h;
+            (h_ii.is_finite() && h_ii > 0.0)
+                .then(|| (2.0 / h_ii).sqrt())
+                .filter(|s| s.is_finite() && *s > 0.0)
+        })
+        .collect()
+}
+
 /// Minimize from the model's seed with a local minimizer, then [`finish`].
 pub(crate) fn run(fit: &Fit, how: Local) -> FitResult {
     finish(fit, local(fit, &fit.seed(), how))
@@ -167,9 +245,41 @@ pub(crate) fn finish(fit: &Fit, mut min: FunctionMinimum) -> FitResult {
     // otherwise HESSE. A Hessian that is not positive-definite marks the
     // minimum invalid either way.
     let mut from_gradient = None;
+    let mut exact_edm = None;
     if opts.hesse && min.is_valid() {
         match fit.grad {
-            Some(grad) => from_gradient = Some(gradient_hessian(fit, grad, &min)),
+            Some(grad) => {
+                let mut hessian = gradient_hessian(fit, grad, &min);
+                if gradient_strategy(fit) != opts.strategy {
+                    // Strategy 1's check, with the exact Hessian: while the
+                    // distance to the minimum it implies is above MIGRAD's
+                    // tolerance, continue MIGRAD from there with that metric.
+                    let edmval = opts.tolerance * 0.002;
+                    for _ in 0..3 {
+                        let Some((cov, g)) = &hessian else { break };
+                        let edm = 0.5
+                            * (0..g.len())
+                                .map(|a| (0..g.len()).map(|b| g[a] * cov[a][b] * g[b]).sum::<f64>())
+                                .sum::<f64>();
+                        exact_edm = Some(edm);
+                        if !edm.is_finite() || edm <= edmval {
+                            break;
+                        }
+                        let mut steps = vec![None; min.params().len()];
+                        for (k, i) in fit.free().into_iter().enumerate() {
+                            steps[i] = Some(cov[k][k].sqrt()).filter(|s| s.is_finite() && *s > 0.0);
+                        }
+                        let again = configure_steps(MnMigrad::new(), fit, &min.params(), &steps, 0)
+                            .minimize_grad(&WithGradient { fit, grad });
+                        if !again.is_valid() || again.fval() > min.fval() {
+                            break;
+                        }
+                        min = again;
+                        hessian = gradient_hessian(fit, grad, &min);
+                    }
+                }
+                from_gradient = Some(hessian.map(|(cov, _)| cov));
+            }
             None => {
                 min = MnHesse::new()
                     .with_strategy(opts.strategy)
@@ -243,18 +353,20 @@ pub(crate) fn finish(fit: &Fit, mut min: FunctionMinimum) -> FitResult {
     r.minos = minos;
     r.covariance = covariance;
     r.fval = fval;
-    r.edm = min.edm(); // `nfcn` is counted by the caller
+    r.edm = exact_edm.unwrap_or_else(|| min.edm()); // `nfcn` is counted by the caller
     r
 }
 
 /// The free-parameter covariance `2·H⁻¹` from a central difference of the
 /// analytic gradient at the minimum (steps of a thousandth of MIGRAD's error
-/// estimate), symmetrized; `None` when `H` is not positive-definite.
+/// estimate), symmetrized, with the free parameters' gradient there (the
+/// mean of the differences' two ends); `None` when `H` is not
+/// positive-definite.
 fn gradient_hessian(
     fit: &Fit,
     grad: super::GradCostFn,
     min: &FunctionMinimum,
-) -> Option<Vec<Vec<f64>>> {
+) -> Option<(Vec<Vec<f64>>, Vec<f64>)> {
     let free = fit.free();
     let n = free.len();
     let p = min.params();
@@ -262,6 +374,7 @@ fn gradient_hessian(
     let mut h = vec![vec![0.0; n]; n];
     let mut g_up = vec![0.0; p.len()];
     let mut g_down = vec![0.0; p.len()];
+    let mut g_mid = vec![0.0; n];
     for (a, &i) in free.iter().enumerate() {
         let e = errs[i];
         let step = if e.is_finite() && e > 0.0 {
@@ -276,6 +389,7 @@ fn gradient_hessian(
         grad(&down, &mut g_down);
         for (b, &j) in free.iter().enumerate() {
             h[a][b] = (g_up[j] - g_down[j]) / (2.0 * step);
+            g_mid[b] += 0.5 * (g_up[j] + g_down[j]) / n as f64;
         }
     }
     for a in 0..n {
@@ -317,10 +431,11 @@ fn gradient_hessian(
         })
         .collect();
     // H is symmetric, so is its inverse: column c is row c.
-    Some(
+    Some((
         columns
             .into_iter()
             .map(|col| col.into_iter().map(|v| 2.0 * v).collect())
             .collect(),
-    )
+        g_mid,
+    ))
 }

@@ -46,6 +46,7 @@ mod fitter;
 mod inference;
 mod mcmc;
 mod model;
+mod nuts;
 mod result;
 mod rng;
 mod scan;
@@ -66,6 +67,7 @@ pub use inference::{
 };
 pub use mcmc::{Chain, Sampler};
 pub use model::Model;
+pub use nuts::Nuts;
 /// The error [`Points::new`] and [`Points::unweighted`] return for inputs of
 /// different lengths (from `oxistats`).
 pub use oxistats::StatError;

@@ -166,7 +166,7 @@ fn minos_with_an_analytic_gradient_matches_the_parabolic_errors() {
     let y: Vec<f64> = x
         .iter()
         .enumerate()
-        .map(|(i, &v)| (truth(v) + (f64::from(i as u32) * 2.3).sin() * truth(v).sqrt()).round())
+        .map(|(i, &v)| (truth(v) + ((i as f64) * 2.3).sin() * truth(v).sqrt()).round())
         .collect();
     let data = Points::unweighted(&x, &y).unwrap();
     let model = (Model::gaussian("peak") + Model::exponential("bkg"))

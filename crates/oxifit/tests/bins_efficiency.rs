@@ -171,9 +171,15 @@ fn unbinned_efficiency_agrees_with_the_binned_one() {
     // binomial likelihood is then the same up to a constant, so the fit is too.
     let (mut x, mut ok) = (Vec::new(), Vec::new());
     for i in 0..30 {
-        for j in 0..TOTAL[i] as usize {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "whole, non-negative counts"
+        )]
+        let (total, passed) = (TOTAL[i] as usize, PASSED[i] as usize);
+        for j in 0..total {
             x.push(X[i]);
-            ok.push(j < PASSED[i] as usize);
+            ok.push(j < passed);
         }
     }
     let events = Efficiency::events(&x, &ok).unwrap();

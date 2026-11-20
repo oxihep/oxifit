@@ -158,6 +158,16 @@ impl BinomialCost {
     }
 }
 
+/// A number of trials as an integer (rounded, at least 0).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a rounded, non-negative trial count, saturating"
+)]
+fn trials(n: f64) -> u64 {
+    n.round().max(0.0) as u64
+}
+
 /// `k·ln(k/m)`, zero at `k = 0`.
 fn xlogx(k: f64, m: f64) -> f64 {
     if k > 0.0 { k * (k / m).ln() } else { 0.0 }
@@ -235,7 +245,7 @@ impl Cost for BinomialCost {
             .x
             .iter()
             .zip(&self.total)
-            .map(|(&x, &n)| rng.binomial(n.round() as u64, f(&[x], params).clamp(0.0, 1.0)) as f64)
+            .map(|(&x, &n)| rng.binomial(trials(n), f(&[x], params).clamp(0.0, 1.0)) as f64)
             .collect();
         Some(Box::new(self.with_passed(passed)))
     }

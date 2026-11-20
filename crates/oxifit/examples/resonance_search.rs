@@ -39,8 +39,10 @@ const REF_SIGNAL: f64 = 200.0;
 
 /// The truth the data are generated from.
 const TRUE_MASS: f64 = 125.0;
-const TRUE_SIGNAL: f64 = 260.0;
-const TRUE_BACKGROUND: f64 = 40_000.0;
+const N_SIGNAL: usize = 260;
+const TRUE_SIGNAL: f64 = N_SIGNAL as f64;
+const N_BACKGROUND: usize = 40_000;
+const TRUE_BACKGROUND: f64 = N_BACKGROUND as f64;
 /// The background shape: `exp(a·x + b·x²)` with `x = (m − 100)/60`.
 const TRUE_SHAPE: (f64, f64) = (-3.5, 0.9);
 
@@ -135,14 +137,21 @@ fn main() {
     let mut counts = vec![0.0; BINS];
     let mut fill = |m: f64| {
         if (LO..HI).contains(&m) {
-            counts[((m - LO) / WIDTH) as usize] += 1.0;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "inside the histogram range: a bin index"
+            )]
+            {
+                counts[((m - LO) / WIDTH) as usize] += 1.0;
+            }
         }
     };
-    for _ in 0..TRUE_BACKGROUND as usize {
+    for _ in 0..N_BACKGROUND {
         let x = rng.background(TRUE_SHAPE);
         fill(LO + x * (HI - LO));
     }
-    for _ in 0..TRUE_SIGNAL as usize {
+    for _ in 0..N_SIGNAL {
         let m = TRUE_MASS + RESOLUTION * rng.gauss();
         fill(m);
     }
@@ -194,8 +203,8 @@ fn main() {
         let n = 10_000;
         let integral: f64 = (0..n)
             .map(|i| {
-                let x = (i as f64 + 0.5) / n as f64;
-                (a * x + b * x * x).exp() / n as f64
+                let x = (f64::from(i) + 0.5) / f64::from(n);
+                (a * x + b * x * x).exp() / f64::from(n)
             })
             .sum();
         10.0 * TRUE_BACKGROUND / integral * WIDTH / (HI - LO)

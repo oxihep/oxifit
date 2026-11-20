@@ -1,9 +1,10 @@
 //! Bayesian and frequentist answers to the same questions, side by side.
 //!
 //! 1. **A peak's parameters**: the posterior of a Gaussian peak on a
-//!    background (flat priors, an ensemble sampler) against the maximum
-//!    likelihood fit with MINOS errors — near-identical for well-measured
-//!    parameters, as they should be.
+//!    background (flat priors) from the ensemble sampler and from NUTS,
+//!    against the maximum likelihood fit with MINOS errors — near-identical
+//!    for well-measured parameters, as they should be. NUTS's draws are far
+//!    less correlated (a smaller autocorrelation time τ).
 //! 2. **A small signal**: 7 events observed on 3.2 expected, the signal's
 //!    95 % credible upper limit (flat prior on s ≥ 0) against the CLs limit —
 //!    the two classic answers to "how much signal is excluded?".
@@ -14,7 +15,9 @@
 //! cargo run --release -p oxifit --example bayesian_fit
 //! ```
 
-use oxifit::{FitMethod, FitOptions, Fitter, FnCost, HypoTest, Model, ModelCost, Points, Sampler};
+use oxifit::{
+    FitMethod, FitOptions, Fitter, FnCost, HypoTest, Model, ModelCost, Nuts, Points, Sampler,
+};
 
 fn main() {
     let start = std::time::Instant::now();
@@ -28,7 +31,7 @@ fn main() {
         .iter()
         .enumerate()
         .map(|(i, &v)| {
-            (truth(v) + (f64::from(i as u32) * 2.3).sin() * truth(v).sqrt())
+            (truth(v) + ((i as f64) * 2.3).sin() * truth(v).sqrt())
                 .round()
                 .max(0.0)
         })
@@ -49,26 +52,39 @@ fn main() {
         .seed(1)
         .run(500, 3000)
         .expect("sampling");
+    let nuts = Nuts::new(fitter.clone())
+        .seed(1)
+        .run(1000, 2000)
+        .expect("sampling");
     println!(
-        "1. Gaussian peak on a falling background (binned likelihood): {} walkers × 3000 steps, \
-         acceptance {:.2}",
+        "1. Gaussian peak on a falling background (binned likelihood)\n   \
+         ensemble: {} walkers × 3000 steps, acceptance {:.2}; \
+         NUTS: 4 chains × 2000 draws, acceptance {:.2}, {} divergences",
         chain.samples().len() / 3000,
-        chain.acceptance()
+        chain.acceptance(),
+        nuts.acceptance(),
+        nuts.divergences()
     );
     println!(
-        "   parameter        ML fit (MINOS 68 %)                 posterior median (68 % central)   τ (steps)"
+        "   parameter        ML fit (MINOS 68 %)             ensemble median [68 %]       τ    \
+         NUTS median [68 %]           τ    R̂"
     );
     let minos = fit.minos.clone().unwrap_or_default();
     for (k, name) in model.param_names.iter().enumerate() {
         let (lo, hi) = minos.get(k).copied().unwrap_or((f64::NAN, f64::NAN));
         let (a, b) = chain.interval(name, 0.6827).expect("a parameter");
         let med = chain.quantile(name, 0.5).expect("a parameter");
+        let (na, nb) = nuts.interval(name, 0.6827).expect("a parameter");
+        let nmed = nuts.quantile(name, 0.5).expect("a parameter");
         println!(
-            "   {name:<15} {:>9.3} [{:>9.3}, {:>9.3}]     {med:>9.3} [{a:>9.3}, {b:>9.3}]     {:>5.0}",
+            "   {name:<15} {:>8.3} [{:>8.3}, {:>8.3}]   {med:>8.3} [{a:>8.3}, {b:>8.3}] {:>5.0}   \
+             {nmed:>8.3} [{na:>8.3}, {nb:>8.3}] {:>4.1} {:.3}",
             fit.params[k],
             fit.params[k] + lo,
             fit.params[k] + hi,
-            chain.autocorrelation_time(name).unwrap_or(f64::NAN)
+            chain.autocorrelation_time(name).unwrap_or(f64::NAN),
+            nuts.autocorrelation_time(name).unwrap_or(f64::NAN),
+            nuts.r_hat(name).unwrap_or(f64::NAN)
         );
     }
 

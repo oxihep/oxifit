@@ -55,31 +55,36 @@ Median time per fit, including the error computation. "1 core" unless marked.
 
 | Problem | oxifit | oxifit `rayon` | ROOT / RooFit | iminuit | scipy | zfit |
 |---|---|---|---|---|---|---|
-| Binned χ² | 0.20 ms | 0.19 ms | 0.19 ms (0.88 ms with `"E"`) | 1.00 ms | **0.15 ms** | — |
-| Binned likelihood | **0.27 ms** | 0.27 ms | 0.53 ms | 1.25 ms | — | — |
-| Unbinned, 10⁵ events | 161 ms | **38 ms** (12 cores) | 102 ms | 575 ms | — | 188 ms (≈4 cores) |
-| Unbinned, 10⁶ events | 1116 ms | **174 ms** (12 cores) | 1032 ms | 5778 ms | — | 360 ms (≈4 cores) |
+| Binned χ² | **0.071 ms** | 0.072 ms | 0.19 ms (0.87 ms with `"E"`) | 1.00 ms | 0.15 ms | — |
+| Binned likelihood | **0.078 ms** | 0.078 ms | 0.57 ms | 1.27 ms | — | — |
+| Unbinned, 10⁵ events | 60 ms | **14 ms** (12 cores) | 105 ms | 580 ms | — | 189 ms (≈4 cores) |
+| Unbinned, 10⁶ events | 604 ms | **107 ms** (12 cores) | 1064 ms | 5873 ms | — | 365 ms (≈4 cores) |
 
 oxifit's numbers are its best variant per problem; for the unbinned fits that
 is the model built from its shapes (`Model::gaussian + Model::exponential`),
 which carry analytic gradients **and analytic integrals**, so the fit needs no
 numerical normalization. `RESULTS.md` has every variant: a closure model takes
-2.5 s on 10⁶ events (2.1 s with a hand-written gradient), because it is
+2.5 s on 10⁶ events (0.74 s with a hand-written gradient), because it is
 normalized by quadrature at every step.
 
 What the numbers say:
 
-- **Small binned fits**: oxifit, ROOT and scipy cost about the same, a few
-  hundred microseconds, set by the minimizer; iminuit pays ~5 µs of Python per
-  cost call. scipy is fastest on the χ² fit but approximates the errors.
-- **Large unbinned fits on one core**: with built-in shapes **oxifit and
-  RooFit are level** (1.12 s against 1.03 s on 10⁶ events) — both normalize
-  analytically. A closure model is normalized numerically and takes about
-  twice as long; give it its integral with `Model::with_integral` (and its
-  gradient with `with_gradient`) to close the gap.
-- **With threads**: oxifit's `rayon` feature is the fastest here — 5.9× faster
-  than RooFit on 10⁶ events, 2× faster than zfit (which uses about 4 cores
-  through TensorFlow) — and its results do not depend on the thread count.
+- **Small binned fits**: all take well under a millisecond, set by the
+  minimizer's call count. With built-in shapes oxifit needs about 40 calls
+  (analytic gradients, a starting metric from the curvature, the Hessian from
+  the gradient) where the others need 110–180, so it is 2–7× faster than
+  ROOT and scipy; iminuit pays ~5 µs of Python per cost call.
+- **Large unbinned fits on one core**: with built-in shapes **oxifit is 1.8×
+  faster than RooFit** (0.60 s against 1.06 s on 10⁶ events): both normalize
+  analytically, and oxifit evaluates each event's value and gradient in one
+  pass and needs 47 calls. A closure model is normalized numerically and
+  takes about four times as long; give it its integral with
+  `Model::with_integral` (and its gradient with `with_gradient`) to close
+  the gap.
+- **With threads**: oxifit's `rayon` feature is the fastest here — 10×
+  faster than RooFit on 10⁶ events, 3.4× faster than zfit (which uses about
+  4 cores through TensorFlow) — and its results do not depend on the thread
+  count.
 - **Start-up**, not in the table: `import zfit` takes 6–7 s (TensorFlow), and
   its first fit adds graph building (0.4–0.6 s); `import ROOT` takes 0.6 s warm,
   1.9 s cold. A Rust binary starts at once.

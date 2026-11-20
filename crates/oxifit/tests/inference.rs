@@ -13,6 +13,11 @@ const BKG: [f64; 3] = [50.0, 52.0, 40.0];
 
 fn cost(counts: [f64; 3]) -> ModelCost {
     let model = Model::new("sb", &["mu", "lumi"], vec![1.0, 1.0], |x, p| {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "x is a bin index 0, 1 or 2"
+        )]
         let i = x as usize;
         p[0] * SIG[i] + p[1] * BKG[i]
     });
@@ -161,6 +166,11 @@ fn toys_agree_with_the_asymptotic_formulae_at_large_counts() {
     // about 1.5σ.
     let big = {
         let model = Model::new("sb", &["mu", "lumi"], vec![1.0, 1.0], |x, p| {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "x is a bin index 0, 1 or 2"
+            )]
             let i = x as usize;
             100.0 * (p[0] * SIG[i] + p[1] * BKG[i])
         });

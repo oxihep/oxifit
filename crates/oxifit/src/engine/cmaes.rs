@@ -128,8 +128,9 @@ pub(crate) fn cma_es(fit: &Fit, cfg: CmaEs) -> FitResult {
             *p = (1.0 - cs) * *p + ks * v;
         }
         let ps_norm = ps.iter().map(|x| x * x).sum::<f64>().sqrt();
-        let hsig = ps_norm / (1.0 - (1.0 - cs).powi(2 * (generation as i32 + 1))).sqrt() / chi_n
-            < 1.4 + 2.0 / (df + 1.0);
+        let hsig =
+            ps_norm / (1.0 - (1.0 - cs).powf(2.0 * (generation as f64 + 1.0))).sqrt() / chi_n
+                < 1.4 + 2.0 / (df + 1.0);
         let kc = (cc * (2.0 - cc) * mueff).sqrt();
         for (p, y) in pc.iter_mut().zip(&yw) {
             *p = (1.0 - cc) * *p + if hsig { kc * y } else { 0.0 };

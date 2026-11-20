@@ -68,13 +68,13 @@ fn banana_quantiles_match_a_grid_integration() {
     // The exact marginal CDF of y on a fine grid.
     let (nx, ny) = (1200, 3000);
     let (x0, x1, y0, y1) = (-6.0, 6.0, -3.0, 30.0);
-    let (hx, hy) = ((x1 - x0) / nx as f64, (y1 - y0) / ny as f64);
+    let (hx, hy) = ((x1 - x0) / f64::from(nx), (y1 - y0) / ny as f64);
     let mut marginal = vec![0.0; ny];
     for (j, m) in marginal.iter_mut().enumerate() {
         let y = y0 + hy * (j as f64 + 0.5);
         *m = (0..nx)
             .map(|i| {
-                let x = x0 + hx * (i as f64 + 0.5);
+                let x = x0 + hx * (f64::from(i) + 0.5);
                 (-0.5 * x * x - 0.5 * ((y - x * x) / 0.5).powi(2)).exp()
             })
             .sum::<f64>();
@@ -119,7 +119,7 @@ fn poisson_signal_posterior_upper_limit() {
     let h = 1e-4;
     let dens: Vec<f64> = (0..400_000)
         .map(|k| {
-            let s = h * (k as f64 + 0.5);
+            let s = h * (f64::from(k) + 0.5);
             ((s + b).ln() * n - (s + b)).exp()
         })
         .collect();
