@@ -73,7 +73,7 @@ fn hesse_errors_of_a_linear_fit_are_exact() {
 
     let model = Model::polynomial("line", 1).with_params(vec![0.0, 1.0]);
     for hesse in [true, false] {
-        let fit = data.fit_opts(&model, &FitOptions::new().with_hesse(hesse));
+        let fit = data.fit_opts(&model, &FitOptions::new().hesse(hesse));
         assert!(fit.valid, "{fit:?}");
         let cov = fit.covariance.as_ref().unwrap();
         let tol = if hesse { 1e-6 } else { 1e-2 }; // MIGRAD's estimate is approximate
@@ -99,7 +99,7 @@ fn minos_brackets_the_minimum_and_matches_a_parabolic_cost() {
     let model = Model::polynomial("line", 1)
         .with_params(vec![0.0, 1.0])
         .fix("p0");
-    let fit = data.fit_opts(&model, &FitOptions::new().with_minos(true));
+    let fit = data.fit_opts(&model, &FitOptions::new().minos(true));
     let minos = fit.minos.as_ref().expect("MINOS was requested");
     assert_eq!(minos[0], (0.0, 0.0), "a fixed parameter has no MINOS error");
     let (lo, hi) = minos[1];

@@ -71,7 +71,7 @@ fn formula_models_carry_exact_gradients() {
     let e: Vec<f64> = y.iter().map(|v| v.sqrt().max(1.0)).collect();
     let data = Points::new(&x, &y, &e).unwrap();
     let with = data.fit_opts(&m, &FitOptions::new());
-    let without = data.fit_opts(&m, &FitOptions::new().with_gradient(false));
+    let without = data.fit_opts(&m, &FitOptions::new().gradient(false));
     assert!(with.valid && without.valid);
     for k in 0..5 {
         assert!((with.params[k] - without.params[k]).abs() < 0.01 * with.errors[k]);

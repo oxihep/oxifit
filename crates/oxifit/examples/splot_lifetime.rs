@@ -163,8 +163,8 @@ fn main() {
     println!("\n3. Signal lifetime from the sWeighted decay times (truth {TAU_B} ps)");
     let variants = [
         ("naive (Σw events)", FitOptions::new()),
-        ("SumW2", FitOptions::new().with_sumw2(true)),
-        ("asymptotic", FitOptions::new().with_asymptotic_errors(true)),
+        ("SumW2", FitOptions::new().sumw2(true)),
+        ("asymptotic", FitOptions::new().asymptotic_errors(true)),
     ];
     for (label, opts) in variants {
         let f = lifetime_fit(&t, w, opts);

@@ -9,7 +9,7 @@
 //! 2. **The turn-on**: an error-function step fitted to the efficiencies.
 //! 3. **Binomial or χ²**: on a background-free sample (matched to the true
 //!    muons, as in simulation), the binomial likelihood
-//!    ([`Efficiency`](oxifit::Efficiency)) against a χ² with binomial errors —
+//!    ([`BinomialData`](oxifit::BinomialData)) against a χ² with binomial errors —
 //!    which, at efficiencies near 0 and 1, biases the curve; toys show by how
 //!    much.
 //!
@@ -19,7 +19,7 @@
 //! cargo run --release -p oxifit --example tag_and_probe
 //! ```
 
-use oxifit::{Efficiency, FitExt, FitMethod, FitOptions, Model, Points, Simultaneous};
+use oxifit::{BinomialData, FitExt, FitMethod, FitOptions, Model, Points, Simultaneous};
 
 const M_LO: f64 = 70.0;
 const M_HI: f64 = 110.0;
@@ -135,7 +135,7 @@ fn main() {
         let fit = Simultaneous::new()
             .channel("pass", &pass_data, &pass_model, &opts)
             .channel("fail", &fail_data, &fail_model, &opts)
-            .fit(&opts.with_minos(true));
+            .fit(&opts.minos(true));
         // The truth averaged over the bin (uniform pT within it).
         let truth: f64 = (0..200)
             .map(|k| efficiency(lo + (hi - lo) * (f64::from(k) + 0.5) / 200.0, &TRUE))
@@ -173,7 +173,7 @@ fn main() {
         .expect("edges");
     // Each point is a bin average: compare it with the curve averaged over
     // the bin, not its value at the center.
-    let fit = points.fit_opts(&turn_on, &FitOptions::new().with_bin_integration(true));
+    let fit = points.fit_opts(&turn_on, &FitOptions::new().bin_integration(true));
     println!("\n2. Turn-on fitted to the tag-and-probe efficiencies (χ², bin-averaged)");
     let names = ["threshold (GeV)", "resolution (GeV)", "plateau"];
     for k in 0..3 {
@@ -202,7 +202,7 @@ fn main() {
                     .count() as f64
             })
             .collect();
-        let binomial = Efficiency::new(&x, &passed, &total)
+        let binomial = BinomialData::new(&x, &passed, &total)
             .expect("lengths")
             .fit(&turn_on, &FitOptions::new());
         // χ² on k/n with the binomial error √(ε(1−ε)/n), which is 0 at

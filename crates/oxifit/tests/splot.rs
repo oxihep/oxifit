@@ -134,7 +134,7 @@ fn asymptotic_errors_reduce_to_hesse_and_ignore_a_constant_weight() {
     let (_, t) = sample(&mut rng, 3000, 0);
     let ones = vec![1.0; t.len()];
     let plain = lifetime_fit(&t, &ones, FitOptions::new());
-    let asym = lifetime_fit(&t, &ones, FitOptions::new().with_asymptotic_errors(true));
+    let asym = lifetime_fit(&t, &ones, FitOptions::new().asymptotic_errors(true));
     assert!(
         (asym.errors[0] / plain.errors[0] - 1.0).abs() < 0.03,
         "{asym:?} {plain:?}"
@@ -142,7 +142,7 @@ fn asymptotic_errors_reduce_to_hesse_and_ignore_a_constant_weight() {
     // Every event weighted 4: the naive error halves, the right one does not.
     let fours = vec![4.0; t.len()];
     let naive = lifetime_fit(&t, &fours, FitOptions::new());
-    let right = lifetime_fit(&t, &fours, FitOptions::new().with_asymptotic_errors(true));
+    let right = lifetime_fit(&t, &fours, FitOptions::new().asymptotic_errors(true));
     assert!((naive.errors[0] / plain.errors[0] - 0.5).abs() < 0.01);
     assert!(
         (right.errors[0] / plain.errors[0] - 1.0).abs() < 0.03,
@@ -175,7 +175,7 @@ fn sweighted_lifetime_errors_cover() {
         .unwrap();
         let w = sw.weights(0);
         let naive = lifetime_fit(&t, w, FitOptions::new());
-        let asym = lifetime_fit(&t, w, FitOptions::new().with_asymptotic_errors(true));
+        let asym = lifetime_fit(&t, w, FitOptions::new().asymptotic_errors(true));
         if naive.valid && asym.valid {
             pulls_naive.push((naive.params[0] - 1.5) / naive.errors[0]);
             pulls_asym.push((asym.params[0] - 1.5) / asym.errors[0]);

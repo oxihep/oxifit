@@ -26,7 +26,7 @@ use crate::scan::FitError;
 /// let cost = FnCost::new(&["mu"], |p| ((p[0] - 1.2) / 0.3).powi(2));
 /// let chain = Sampler::new(Fitter::new(&cost, vec![1.0])).seed(3).run(200, 1000)?;
 /// assert!((chain.mean("mu").unwrap() - 1.2).abs() < 0.03);
-/// assert!((chain.std("mu").unwrap() - 0.3).abs() < 0.03);
+/// assert!((chain.std_dev("mu").unwrap() - 0.3).abs() < 0.03);
 /// # Ok::<(), oxifit::FitError>(())
 /// ```
 #[derive(Debug, Clone)]
@@ -123,7 +123,7 @@ impl<'c> Sampler<'c> {
         let a = self.stretch.max(1.0 + 1e-6);
 
         // Start: a ball around the best fit, a tenth of each error wide.
-        let best = self.fitter.fit(&FitOptions::new().with_hesse(true));
+        let best = self.fitter.fit(&FitOptions::new().hesse(true));
         let (center, scale): (Vec<f64>, Vec<f64>) = if best.valid {
             (
                 best.params.clone(),
@@ -332,7 +332,7 @@ impl Chain {
 
     /// The posterior standard deviation of `name`.
     #[must_use]
-    pub fn std(&self, name: &str) -> Option<f64> {
+    pub fn std_dev(&self, name: &str) -> Option<f64> {
         let v = self.values(name)?;
         let m = v.iter().sum::<f64>() / v.len() as f64;
         Some((v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() - 1).max(1) as f64).sqrt())

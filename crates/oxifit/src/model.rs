@@ -45,10 +45,13 @@ pub(crate) struct Constraint {
 pub struct Model {
     /// Function name.
     pub name: String,
-    /// Parameter names (used as the Minuit2 parameter labels).
-    pub param_names: Vec<String>,
-    /// Current parameter values; these seed the fit.
-    pub params: Vec<f64>,
+    /// Parameter names (used as the Minuit2 parameter labels); read with
+    /// [`param_names`](Model::param_names).
+    pub(crate) param_names: Vec<String>,
+    /// Current parameter values, which seed the fit; read with
+    /// [`params`](Model::params), set with [`with_params`](Model::with_params)
+    /// or [`set`](Model::set).
+    pub(crate) params: Vec<f64>,
     /// Per-parameter constraints (limits / fixed / step), one per parameter.
     pub(crate) constraints: Vec<Constraint>,
     pub(crate) func: ModelFn,
@@ -284,6 +287,34 @@ impl Model {
         }
     }
 
+    /// The parameter names, in order (the fit result's order too).
+    #[must_use]
+    pub fn param_names(&self) -> &[String] {
+        &self.param_names
+    }
+
+    /// The current parameter values, one per name: the fit's seeds.
+    #[must_use]
+    pub fn params(&self) -> &[f64] {
+        &self.params
+    }
+
+    /// The model with parameter `name` set to `value` (its seed). An unknown
+    /// name is recorded and reported by [`check`](Model::check) and by the fit,
+    /// as for [`limit`](Model::limit).
+    #[must_use]
+    pub fn set(mut self, name: &str, value: f64) -> Model {
+        match self.param_names.iter().position(|n| n == name) {
+            Some(i) => self.params[i] = value,
+            None => {
+                if !self.unknown.iter().any(|u| u == name) {
+                    self.unknown.push(name.to_string());
+                }
+            }
+        }
+        self
+    }
+
     /// The number of variables the model takes: 1, 2 or 3.
     #[must_use]
     pub fn dim(&self) -> usize {
@@ -437,8 +468,8 @@ impl Model {
     /// let sig = Model::gaussian("sig").with_params(vec![50.0, 91.2, 2.5]);
     /// let bkg = Model::exponential("bkg").with_params(vec![3.0, -0.02]);
     /// let model = Model::sum("z", &[&sig, &bkg]).lower_limit("sig.sigma", 0.0);
-    /// assert_eq!(model.param_names[1], "sig.mean");
-    /// assert_eq!(model.param_names[4], "bkg.slope");
+    /// assert_eq!(model.param_names()[1], "sig.mean");
+    /// assert_eq!(model.param_names()[4], "bkg.slope");
     /// assert!((model.eval(91.2) - (50.0 + bkg.eval(91.2))).abs() < 1e-12);
     /// ```
     pub fn sum(name: &str, parts: &[&Model]) -> Model {
@@ -556,7 +587,7 @@ impl Model {
     /// });
     /// let res = Model::normal("res").with_params(vec![0.0, 0.1]);
     /// let smeared = Model::convolve("measured", &decay, &res, (-1.0, 1.0));
-    /// assert_eq!(smeared.param_names, ["decay.n", "decay.tau", "res.mean", "res.sigma"]);
+    /// assert_eq!(smeared.param_names(), ["decay.n", "decay.tau", "res.mean", "res.sigma"]);
     /// // Smearing spreads the decay below t = 0.
     /// assert!(smeared.eval(-0.05) > 0.0 && decay.eval(-0.05) == 0.0);
     /// ```
@@ -634,7 +665,7 @@ impl Model {
     ///     &[&Model::gaussian("x").with_params(vec![10.0, 0.0, 1.0]), &Model::normal("y")],
     /// );
     /// assert_eq!(blob.dim(), 2);
-    /// assert_eq!(blob.param_names, ["x.constant", "x.mean", "x.sigma", "y.mean", "y.sigma"]);
+    /// assert_eq!(blob.param_names(), ["x.constant", "x.mean", "x.sigma", "y.mean", "y.sigma"]);
     /// let peak = blob.eval_at(&[0.0, 0.0]);
     /// assert!((peak - 10.0 / std::f64::consts::TAU.sqrt()).abs() < 1e-12);
     /// ```

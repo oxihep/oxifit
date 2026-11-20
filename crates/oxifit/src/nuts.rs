@@ -117,7 +117,7 @@ impl<'c> Nuts<'c> {
 
         // A common center (the best fit) and scale (its errors), in the
         // unconstrained coordinates.
-        let best = self.fitter.fit(&FitOptions::new().with_hesse(true));
+        let best = self.fitter.fit(&FitOptions::new().hesse(true));
         let start_x = if best.valid {
             best.params.clone()
         } else {

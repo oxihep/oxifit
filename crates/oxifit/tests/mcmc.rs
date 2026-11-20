@@ -17,7 +17,7 @@ fn gauss2() -> FnCost {
 fn mc_error(chain: &oxifit::Chain, name: &str) -> f64 {
     let n = chain.values(name).unwrap().len() as f64;
     let tau = chain.autocorrelation_time(name).unwrap();
-    chain.std(name).unwrap() * (tau / n).sqrt()
+    chain.std_dev(name).unwrap() * (tau / n).sqrt()
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn gaussian_posterior_moments_and_correlation() {
         let m = chain.mean(name).unwrap();
         assert!((m - mean).abs() < 5.0 * err, "{name} mean {m} ± {err}");
         assert!(
-            (chain.std(name).unwrap() / sd - 1.0).abs() < 0.03,
+            (chain.std_dev(name).unwrap() / sd - 1.0).abs() < 0.03,
             "{name} std"
         );
     }

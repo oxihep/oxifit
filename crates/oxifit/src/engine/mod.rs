@@ -313,7 +313,7 @@ pub(crate) fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
         Minimizer::NelderMead => nelder_mead::minimize(fit),
     }))
     .unwrap_or_else(|_| failed(fit.model))
-    .with_sumw2(fit)
+    .sumw2(fit)
     .with_asymptotic(fit)
 }
 
@@ -1124,7 +1124,7 @@ impl FitResult {
     /// `V = H⁻¹·W·H⁻¹` (RooFit's `SumW2Error`), when the fit asks for it. With
     /// the cost `F = −2 ln L`, HESSE's covariance is `C = 2·H_F⁻¹`, so
     /// `V = C·W_F·C / 2`, `W_F` the Hessian of `F` with squared weights.
-    fn with_sumw2(mut self, fit: &Fit) -> FitResult {
+    fn sumw2(mut self, fit: &Fit) -> FitResult {
         let (Some(cost_w2), Some(cov)) = (fit.cost_w2, self.covariance.as_ref()) else {
             return self;
         };

@@ -133,11 +133,11 @@ fn crystal_ball_recovers_its_peak() {
     // estimate_from seeds the (constant, mean, sigma) core, leaving (alpha, n).
     let seeded = Model::crystal_ball("cb").estimate_from(&data);
     assert!(
-        rel_close(seeded.params[1], m0, 0.2),
+        rel_close(seeded.params()[1], m0, 0.2),
         "seeded mean {}",
-        seeded.params[1]
+        seeded.params()[1]
     );
-    assert_eq!(seeded.params[3], 1.5, "alpha default left untouched");
+    assert_eq!(seeded.params()[3], 1.5, "alpha default left untouched");
 
     let model = Model::crystal_ball("cb")
         .with_params(vec![c0, m0, s0, a0, n0])

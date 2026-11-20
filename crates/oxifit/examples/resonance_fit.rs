@@ -97,7 +97,7 @@ fn main() {
         ("Neyman χ²", FitMethod::Chi2),
         ("Poisson likelihood", FitMethod::Likelihood),
     ] {
-        let opts = FitOptions::new().method(method).with_minos(true);
+        let opts = FitOptions::new().method(method).minos(true);
         let r = data.fit_opts(&model, &opts);
         // The Gaussian's area in events: amplitude × σ√(2π) / bin width.
         let yield_ = r.params[0] * r.params[2] * (2.0 * std::f64::consts::PI).sqrt() / width;

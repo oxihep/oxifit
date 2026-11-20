@@ -35,7 +35,7 @@ fn binned_likelihood_toys_have_unit_pulls() {
     let study = Toys::binned(&peak(), &xs).seed(7).run(&peak(), &opts, 400);
     assert_eq!(study.fits.len(), 400);
     assert!(study.valid_fraction() > 0.98, "{}", study.valid_fraction());
-    assert_eq!(study.truth, peak().params);
+    assert_eq!(study.truth, peak().params());
     assert_unit_pulls(&study);
 }
 
@@ -53,7 +53,7 @@ fn extended_unbinned_toys_have_unit_pulls_and_a_poisson_yield() {
         .method(FitMethod::ExtendedUnbinnedLikelihood)
         .range(-2.0, 4.0);
     let study = Toys::unbinned(&density(), (-2.0, 4.0), 0)
-        .extended()
+        .extended(true)
         .seed(3)
         .run(&density(), &opts, 300);
     assert!(study.valid_fraction() > 0.98);

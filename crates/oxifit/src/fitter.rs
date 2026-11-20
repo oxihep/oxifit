@@ -21,7 +21,7 @@ use crate::scan::{self, Contour, FitError, Profile, Refit};
 /// let (n, b) = (7.0_f64, 3.2);
 /// let nll = FnCost::new(&["s"], move |p| 2.0 * ((p[0] + b) - n * (p[0] + b).ln()));
 /// let fitter = Fitter::new(&nll, vec![1.0]).lower_limit("s", -b);
-/// let fit = fitter.fit(&FitOptions::new().with_minos(true));
+/// let fit = fitter.fit(&FitOptions::new().minos(true));
 /// assert!((fit.params[0] - 3.8).abs() < 1e-3); // ŝ = n − b
 /// let (lo, hi) = fit.minos.as_ref().unwrap()[0];
 /// assert!(lo < 0.0 && hi > 0.0 && hi > -lo); // asymmetric Poisson interval

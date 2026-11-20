@@ -28,6 +28,7 @@ use crate::engine::linalg;
 use crate::fitter::Fitter;
 use crate::result::{FitOptions, FitResult};
 use crate::rng::Rng;
+use crate::scan::FitError;
 
 /// How a [`norm_sys`](Sample::norm_sys) factor is interpolated between its
 /// ±1σ values `hi` and `lo`.
@@ -286,7 +287,7 @@ enum Resolved {
 /// assert_eq!(model.param_names(), ["mu", "bkg_norm", "mc_stat[0]", "mc_stat[1]"]);
 /// let fit = model.fitter().fit(&FitOptions::new());
 /// assert!(fit.valid);
-/// # Ok::<(), oxifit::TemplateError>(())
+/// # Ok::<(), oxifit::FitError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateModel {
@@ -300,43 +301,6 @@ pub struct TemplateModel {
     histo_interp: HistoInterp,
     lumi_sigma: f64,
 }
-
-/// Why a [`TemplateModel`] could not be built.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum TemplateError {
-    /// A sample's template (or a modifier's per-bin data) has a different
-    /// number of bins than its channel.
-    BinMismatch {
-        /// The channel.
-        channel: String,
-        /// The sample.
-        sample: String,
-    },
-    /// A name used by two modifiers of different kinds.
-    KindConflict(String),
-    /// A workspace could not be read (with `pyhf`): what was wrong.
-    Workspace(String),
-}
-
-impl std::fmt::Display for TemplateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TemplateError::BinMismatch { channel, sample } => {
-                write!(
-                    f,
-                    "sample {sample:?} has a different number of bins than channel {channel:?}"
-                )
-            }
-            TemplateError::KindConflict(n) => {
-                write!(f, "{n:?} names modifiers of different kinds")
-            }
-            TemplateError::Workspace(why) => write!(f, "workspace: {why}"),
-        }
-    }
-}
-
-impl std::error::Error for TemplateError {}
 
 /// The polynomial of interpolation code 4 between `lo` and `hi`: the
 /// coefficients `a₁…a₆` of `κ(α) − 1 = Σ aᵢ αⁱ` on `|α| < 1`.
@@ -373,9 +337,9 @@ impl TemplateModel {
     /// A model of these channels.
     ///
     /// # Errors
-    /// [`TemplateError`] for a template of the wrong number of bins, or one
+    /// [`FitError`] for a template of the wrong number of bins, or one
     /// name used for modifiers of different kinds.
-    pub fn new(channels: Vec<Channel>) -> Result<TemplateModel, TemplateError> {
+    pub fn new(channels: Vec<Channel>) -> Result<TemplateModel, FitError> {
         let mut m = TemplateModel {
             channels,
             params: Vec::new(),
@@ -397,7 +361,7 @@ impl TemplateModel {
         mut self,
         norm: NormInterp,
         histo: HistoInterp,
-    ) -> Result<TemplateModel, TemplateError> {
+    ) -> Result<TemplateModel, FitError> {
         self.norm_interp = norm;
         self.histo_interp = histo;
         self.resolve()?;
@@ -409,7 +373,7 @@ impl TemplateModel {
     ///
     /// # Errors
     /// As [`new`](Self::new).
-    pub fn lumi_uncertainty(mut self, sigma: f64) -> Result<TemplateModel, TemplateError> {
+    pub fn lumi_uncertainty(mut self, sigma: f64) -> Result<TemplateModel, FitError> {
         self.lumi_sigma = sigma;
         self.resolve()?;
         Ok(self)
@@ -425,7 +389,7 @@ impl TemplateModel {
         bounds: (f64, f64),
         tag: &str,
         tags: &mut Vec<(String, String)>,
-    ) -> Result<usize, TemplateError> {
+    ) -> Result<usize, FitError> {
         if let Some(i) = params.iter().position(|p| p.name == name) {
             let same = tags.iter().any(|(n, t)| *n == name && t == tag);
             // normsys and histosys may share an α.
@@ -434,7 +398,7 @@ impl TemplateModel {
                     .iter()
                     .any(|(n, t)| *n == name && (t == "normsys" || t == "histosys"));
             if !same && !compatible {
-                return Err(TemplateError::KindConflict(name));
+                return Err(FitError::KindConflict(name));
             }
             return Ok(i);
         }
@@ -450,13 +414,13 @@ impl TemplateModel {
     }
 
     /// Resolve every modifier to parameters, and set the auxiliary data.
-    fn resolve(&mut self) -> Result<(), TemplateError> {
+    fn resolve(&mut self) -> Result<(), FitError> {
         let mut params: Vec<Param> = Vec::new();
         let mut tags: Vec<(String, String)> = Vec::new();
         let mut resolved = Vec::new();
         for ch in &self.channels {
             let nb = ch.bins();
-            let mismatch = |s: &Sample| TemplateError::BinMismatch {
+            let mismatch = |s: &Sample| FitError::BinMismatch {
                 channel: ch.name.clone(),
                 sample: s.name.clone(),
             };
@@ -834,7 +798,7 @@ impl TemplateModel {
         let Some(ip) = self.params.iter().position(|p| p.name == poi) else {
             return Vec::new();
         };
-        let quiet = FitOptions::new().with_hesse(false);
+        let quiet = FitOptions::new().hesse(false);
         let shift = |name: &str, value: f64| -> f64 {
             let r = fitter
                 .clone()
@@ -1130,13 +1094,13 @@ impl Workspace {
     /// using the named measurement or, with `None`, the first.
     ///
     /// # Errors
-    /// [`TemplateError::Workspace`] for JSON that is not a workspace this
+    /// [`FitError::Workspace`] for JSON that is not a workspace this
     /// reader understands (and the model's own errors).
-    pub fn from_json(json: &str, measurement: Option<&str>) -> Result<Workspace, TemplateError> {
+    pub fn from_json(json: &str, measurement: Option<&str>) -> Result<Workspace, FitError> {
         use serde_json::Value;
-        let bad = |why: &str| TemplateError::Workspace(why.to_string());
+        let bad = |why: &str| FitError::Workspace(why.to_string());
         let v: Value = serde_json::from_str(json).map_err(|e| bad(&e.to_string()))?;
-        let nums = |x: &Value, what: &str| -> Result<Vec<f64>, TemplateError> {
+        let nums = |x: &Value, what: &str| -> Result<Vec<f64>, FitError> {
             x.as_array()
                 .ok_or_else(|| bad(&format!("{what}: expected an array")))?
                 .iter()
@@ -1146,7 +1110,7 @@ impl Workspace {
                 })
                 .collect()
         };
-        let text = |x: &Value, key: &str| -> Result<String, TemplateError> {
+        let text = |x: &Value, key: &str| -> Result<String, FitError> {
             x.get(key)
                 .and_then(Value::as_str)
                 .map(str::to_string)

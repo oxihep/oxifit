@@ -21,7 +21,7 @@ use crate::scan::FitError;
 /// weights sum to its yield; at the extended fit's minimum the weights of an
 /// event sum to one. Fit the control variable with the weights (an
 /// unbinned likelihood with
-/// [`with_asymptotic_errors`](FitOptions::with_asymptotic_errors) for its
+/// [`asymptotic_errors`](FitOptions::asymptotic_errors) for its
 /// covariance) to measure a species alone. The control variable must be
 /// independent of the discriminating one within each species.
 ///

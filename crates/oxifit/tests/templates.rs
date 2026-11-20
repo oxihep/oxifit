@@ -7,8 +7,7 @@
 //! likelihoods themselves agree to 1e-13).
 
 use oxifit::{
-    Channel, Cost, FitOptions, HistoInterp, HypoTest, NormInterp, Sample, TemplateError,
-    TemplateModel,
+    Channel, Cost, FitError, FitOptions, HistoInterp, HypoTest, NormInterp, Sample, TemplateModel,
 };
 
 fn workspace_a() -> TemplateModel {
@@ -287,7 +286,7 @@ fn interpolation_codes_and_bad_models() {
         TemplateModel::new(vec![
             Channel::new("SR", &[1.0, 2.0]).sample(Sample::new("s", &[1.0]))
         ]),
-        Err(TemplateError::BinMismatch { .. })
+        Err(FitError::BinMismatch { .. })
     ));
     assert!(matches!(
         TemplateModel::new(vec![
@@ -297,7 +296,7 @@ fn interpolation_codes_and_bad_models() {
                     .norm_sys("x", 0.9, 1.1)
             )
         ]),
-        Err(TemplateError::KindConflict(_))
+        Err(FitError::KindConflict(_))
     ));
 }
 

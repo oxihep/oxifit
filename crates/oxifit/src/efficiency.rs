@@ -1,4 +1,4 @@
-//! Efficiency fits with the binomial likelihood: a model `ε(x)` in [0, 1]
+//! BinomialData fits with the binomial likelihood: a model `ε(x)` in [0, 1]
 //! fitted to pass/total counts per bin, or to individual pass/fail events —
 //! ROOT's `TEfficiency::Fit`, RooFit's `RooEfficiency`.
 
@@ -10,7 +10,7 @@ use crate::model::Model;
 use crate::result::{FitOptions, FitResult};
 use crate::rng::Rng;
 
-/// Efficiency data: at each `x`, `passed` of `total` trials — the bins of a
+/// BinomialData data: at each `x`, `passed` of `total` trials — the bins of a
 /// pass/total histogram pair, or single events (`total` 1, `passed` 0 or 1).
 ///
 /// A χ² fit to `passed/total` with binomial errors fails where the
@@ -18,7 +18,7 @@ use crate::rng::Rng;
 /// is undefined); the binomial likelihood is right everywhere.
 ///
 /// ```
-/// use oxifit::{Efficiency, FitOptions, Model};
+/// use oxifit::{BinomialData, FitOptions, Model};
 ///
 /// // A turn-on: ε = ½·(1 + erf((x − 20)/(√2·3))), seen in 30 bins.
 /// let x: Vec<f64> = (0..30).map(|i| 5.0 + i as f64).collect();
@@ -27,7 +27,7 @@ use crate::rng::Rng;
 ///     .iter()
 ///     .map(|&x| (40.0 * 0.5 * (1.0 + oxistats::erf((x - 20.0) / (2f64.sqrt() * 3.0)))).round())
 ///     .collect();
-/// let data = Efficiency::new(&x, &passed, &total)?;
+/// let data = BinomialData::new(&x, &passed, &total)?;
 /// let turn_on = Model::new("eff", &["threshold", "width"], vec![18.0, 2.0], |x, p| {
 ///     0.5 * (1.0 + oxistats::erf((x - p[0]) / (2f64.sqrt() * p[1])))
 /// })
@@ -37,18 +37,18 @@ use crate::rng::Rng;
 /// # Ok::<(), oxistats::StatError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq)]
-pub struct Efficiency {
+pub struct BinomialData {
     x: Vec<f64>,
     passed: Vec<f64>,
     total: Vec<f64>,
 }
 
-impl Efficiency {
+impl BinomialData {
     /// Binned efficiencies: `passed[i]` of `total[i]` trials at `x[i]`.
     ///
     /// # Errors
     /// [`StatError::LengthMismatch`] for slices of different lengths.
-    pub fn new(x: &[f64], passed: &[f64], total: &[f64]) -> Result<Efficiency, StatError> {
+    pub fn new(x: &[f64], passed: &[f64], total: &[f64]) -> Result<BinomialData, StatError> {
         if passed.len() != x.len() {
             return Err(StatError::LengthMismatch {
                 left: x.len(),
@@ -61,7 +61,7 @@ impl Efficiency {
                 right: total.len(),
             });
         }
-        Ok(Efficiency {
+        Ok(BinomialData {
             x: x.to_vec(),
             passed: passed.to_vec(),
             total: total.to_vec(),
@@ -72,9 +72,9 @@ impl Efficiency {
     ///
     /// # Errors
     /// [`StatError::LengthMismatch`] for slices of different lengths.
-    pub fn events(x: &[f64], accepted: &[bool]) -> Result<Efficiency, StatError> {
+    pub fn events(x: &[f64], accepted: &[bool]) -> Result<BinomialData, StatError> {
         let passed: Vec<f64> = accepted.iter().map(|&a| f64::from(u8::from(a))).collect();
-        Efficiency::new(x, &passed, &vec![1.0; x.len()])
+        BinomialData::new(x, &passed, &vec![1.0; x.len()])
     }
 
     /// The number of points (bins or events).
@@ -99,7 +99,7 @@ impl Efficiency {
     }
 }
 
-/// The binomial `−2 ln L` of an efficiency model on [`Efficiency`] data, as a
+/// The binomial `−2 ln L` of an efficiency model on [`BinomialData`] data, as a
 /// [`Cost`] (on the deviance scale: zero for a perfect fit, so its minimum is
 /// a goodness-of-fit statistic for binned data).
 #[derive(Clone)]
@@ -126,7 +126,7 @@ const CLAMP: f64 = 1e-12;
 impl BinomialCost {
     /// The cost of `model` on `data`, inside `opts.range` (if any).
     #[must_use]
-    pub fn new(data: &Efficiency, model: &Model, opts: &FitOptions) -> BinomialCost {
+    pub fn new(data: &BinomialData, model: &Model, opts: &FitOptions) -> BinomialCost {
         let keep: Vec<usize> = (0..data.len())
             .filter(|&i| {
                 data.total[i] > 0.0
