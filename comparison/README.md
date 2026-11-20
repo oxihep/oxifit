@@ -4,7 +4,7 @@ The same data, models, starting values and costs, fitted with each tool, then
 compared on whether the results agree, how fast the fits are, and how they read
 as code. Everything here is reproducible with `./run_all.sh`.
 
-Measured on an Apple M4 Pro (12 cores), macOS: oxifit 0.7.0 (Rust 1.100,
+Measured on an Apple M4 Pro (12 cores), macOS: oxifit 0.8.0 (Rust 1.100,
 release build), ROOT 6.40.04 (PyROOT; Minuit2), iminuit 2.33.0, scipy 1.18.1,
 zfit 0.28.0, numpy 2.5 (Python 3.13). [`results/RESULTS.md`](results/RESULTS.md)
 has the full tables; the raw outputs are in `results/*.jsonl`.

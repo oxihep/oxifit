@@ -6,6 +6,12 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.8.0]
+
+Hamiltonian Monte Carlo, and fits with an analytic gradient about twice as
+fast: the 10⁶-event unbinned comparison fit now beats RooFit by 1.8× on one
+core.
+
 ### Added
 
 - **`Nuts`: Hamiltonian Monte Carlo with the No-U-Turn Sampler** (Hoffman
