@@ -83,14 +83,14 @@ impl Toys {
         }
     }
 
-    /// Draw a Poisson number of events of mean `∫truth` over the range — the
-    /// truth being an event density, for
-    /// [`FitMethod::ExtendedUnbinnedLikelihood`](crate::FitMethod::ExtendedUnbinnedLikelihood).
-    /// No effect on binned toys.
+    /// With `on`, draw a Poisson number of events of mean `∫truth` over the
+    /// range — the truth being an event density, for
+    /// [`FitMethod::ExtendedUnbinnedLikelihood`](crate::FitMethod::ExtendedUnbinnedLikelihood)
+    /// (off by default: exactly `n` events). No effect on binned toys.
     #[must_use]
-    pub fn extended(mut self) -> Toys {
+    pub fn extended(mut self, on: bool) -> Toys {
         if let Kind::Unbinned { extended, .. } = &mut self.kind {
-            *extended = true;
+            *extended = on;
         }
         self
     }

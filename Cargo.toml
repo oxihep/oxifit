@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.100"
 license = "MIT"
@@ -24,10 +24,10 @@ cast_possible_wrap = "warn"
 cast_lossless = "warn"
 
 [workspace.dependencies]
-oxifit-formula = { path = "crates/oxifit-formula", version = "0.8.0" }
+oxifit-formula = { path = "crates/oxifit-formula", version = "0.9.0" }
 # Until oxistats is on crates.io it is a git dependency. `version` is kept so
 # the switch is just dropping `git`/`tag`.
-oxistats = { git = "https://github.com/oxihep/oxistats", tag = "v0.1.0", version = "0.1.0" }
+oxistats = { git = "https://github.com/oxihep/oxistats", tag = "v0.2.0", version = "0.2.0" }
 minuit2 = "0.5"
 argmin = { version = "0.11", default-features = false }
 argmin-math = { version = "0.5", features = ["vec"] }

@@ -111,10 +111,10 @@ fn at_mass<'c>(f: &Fitter<'c>, m: f64) -> Fitter<'c> {
 fn signal_plus_background(order: usize) -> Model {
     let bkg = background(order);
     let mut names = vec!["mu".to_string(), "mass".to_string()];
-    names.extend(bkg.param_names.iter().cloned());
+    names.extend(bkg.param_names().iter().cloned());
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut seed = vec![1.0, TRUE_MASS];
-    seed.extend(bkg.params.iter());
+    seed.extend(bkg.params().iter());
     Model::new("s+b", &refs, seed, move |m, p| {
         let peak = (-0.5 * ((m - p[1]) / RESOLUTION).powi(2)).exp()
             / (RESOLUTION * std::f64::consts::TAU.sqrt());
@@ -223,9 +223,7 @@ fn main() {
         let worst = (110..=150)
             .step_by(5)
             .map(|m| {
-                let fixed = model.clone().fix("mass");
-                let mut fixed = fixed;
-                fixed.params[1] = f64::from(m);
+                let fixed = model.clone().fix("mass").set("mass", f64::from(m));
                 let spur = asimov.fit_opts(&fixed, &likelihood());
                 // σ(μ) on the data's statistics: √10 larger than on the 10× sample.
                 (spur.params[0] / (spur.errors[0] * 10f64.sqrt())).abs()
@@ -285,7 +283,7 @@ fn main() {
     // Mass free, from the scan's best point; MINOS and the profile give the
     // signal strength's (asymmetric) interval.
     let fitter = fitter.set("mass", best);
-    let fit = fitter.fit(&FitOptions::new().with_minos(true));
+    let fit = fitter.fit(&FitOptions::new().minos(true));
     let (lo, hi) = fit.minos.as_ref().map_or((f64::NAN, f64::NAN), |m| m[0]);
     println!("4. Signal + background fit (mass free)");
     println!(

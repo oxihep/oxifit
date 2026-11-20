@@ -3,7 +3,7 @@
 //! `"I"` on the comparison's peak histogram rebinned to 20 bins of width 0.5
 //! (where the peak, σ ≈ 0.6, curves within a bin), and `TEfficiency::Fit`.
 
-use oxifit::{Efficiency, FitExt, FitMethod, FitOptions, Model, Points};
+use oxifit::{BinomialData, FitExt, FitMethod, FitOptions, Model, Points};
 
 const COARSE: [f64; 20] = [
     3700.0, 2939.0, 2502.0, 2019.0, 1676.0, 1389.0, 1064.0, 1005.0, 1289.0, 1867.0, 2116.0, 1498.0,
@@ -64,9 +64,7 @@ fn bin_integrated_fits_match_root_option_i() {
         }] {
             let fit = data.fit_opts(
                 &model,
-                &FitOptions::new()
-                    .method(method)
-                    .with_bin_integration(integrate),
+                &FitOptions::new().method(method).bin_integration(integrate),
             );
             assert!(fit.valid, "{method:?} {integrate}");
             for k in 0..5 {
@@ -96,7 +94,7 @@ fn explicit_bin_edges_are_used() {
     let with_edges = hist().with_bin_edges(&edges).unwrap();
     let opts = FitOptions::new()
         .method(FitMethod::Likelihood)
-        .with_bin_integration(true);
+        .bin_integration(true);
     let a = hist().fit_opts(&peak(), &opts);
     let b = with_edges.fit_opts(&peak(), &opts);
     for k in 0..5 {
@@ -144,7 +142,7 @@ fn turn_on() -> Model {
 
 #[test]
 fn binomial_efficiency_fit_matches_tefficiency() {
-    let data = Efficiency::new(&X, &PASSED, &TOTAL).unwrap();
+    let data = BinomialData::new(&X, &PASSED, &TOTAL).unwrap();
     let fit = data.fit(&turn_on(), &FitOptions::new());
     assert!(fit.valid, "{fit:?}");
     let params = [22.046703, 2.564744, 0.952759];
@@ -182,8 +180,8 @@ fn unbinned_efficiency_agrees_with_the_binned_one() {
             ok.push(j < passed);
         }
     }
-    let events = Efficiency::events(&x, &ok).unwrap();
-    let binned = Efficiency::new(&X, &PASSED, &TOTAL)
+    let events = BinomialData::events(&x, &ok).unwrap();
+    let binned = BinomialData::new(&X, &PASSED, &TOTAL)
         .unwrap()
         .fit(&turn_on(), &FitOptions::new());
     let unbinned = events.fit(&turn_on(), &FitOptions::new());
@@ -197,7 +195,7 @@ fn unbinned_efficiency_agrees_with_the_binned_one() {
 #[test]
 fn efficiency_cost_makes_asimov_and_toys() {
     use oxifit::{BinomialCost, Cost, Fitter};
-    let data = Efficiency::new(&X, &PASSED, &TOTAL).unwrap();
+    let data = BinomialData::new(&X, &PASSED, &TOTAL).unwrap();
     let cost = BinomialCost::new(&data, &turn_on(), &FitOptions::new());
     let truth = [22.0, 2.5, 0.95];
     let asimov = cost.asimov(&truth).unwrap();
@@ -212,5 +210,5 @@ fn efficiency_cost_makes_asimov_and_toys() {
     }
     let (a, b) = (cost.toy(&truth, 5).unwrap(), cost.toy(&truth, 5).unwrap());
     assert_eq!(a.value(&truth), b.value(&truth));
-    assert!(Efficiency::new(&X, &PASSED[..3], &TOTAL).is_err());
+    assert!(BinomialData::new(&X, &PASSED[..3], &TOTAL).is_err());
 }

@@ -59,7 +59,7 @@ pub use cost::{Cost, CostSum, FnCost, ModelCost};
 pub use data::{
     Events, Events2, Events3, FitData, FitDataNd, FitExt, Point, PointNd, Points, Points2, Points3,
 };
-pub use efficiency::{BinomialCost, Efficiency};
+pub use efficiency::{BinomialCost, BinomialData};
 pub use fitter::Fitter;
 pub use inference::{
     Cls, Discovery, HypoTest, TestStatistic, ToyCls, ToyDiscovery, UpperLimit, global_significance,
@@ -80,6 +80,6 @@ pub use splot::SWeights;
 #[cfg(feature = "pyhf")]
 pub use template::Workspace;
 pub use template::{
-    Channel, ChannelYields, HistoInterp, Impact, NormInterp, Sample, TemplateError, TemplateModel,
+    Channel, ChannelYields, HistoInterp, Impact, NormInterp, Sample, TemplateModel,
 };
 pub use toys::{PullSummary, ToyStudy, Toys};

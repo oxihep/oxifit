@@ -33,8 +33,10 @@ impl Refit for DataRefit<'_> {
     }
 }
 
-/// Why a [`profile`](crate::FitExt::profile) or
-/// [`contour`](crate::FitExt::contour) could not be computed.
+/// Why a scan, a hypothesis test, a sampler or a template model failed —
+/// oxifit's one error type. A plain [`fit`](crate::FitExt::fit) does not
+/// fail: it returns a [`FitResult`](crate::FitResult) whose `valid` says
+/// whether it converged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FitError {
@@ -60,6 +62,18 @@ pub enum FitError {
     /// An upper limit was not bracketed: the CLs value does not cross the
     /// requested level inside the scanned range — widen it.
     NoCrossing,
+    /// A template sample (or a modifier's per-bin data) has a different
+    /// number of bins than its channel.
+    BinMismatch {
+        /// The channel.
+        channel: String,
+        /// The sample.
+        sample: String,
+    },
+    /// A name used by two template modifiers of different kinds.
+    KindConflict(String),
+    /// A pyhf workspace could not be read: what was wrong.
+    Workspace(String),
 }
 
 impl std::fmt::Display for FitError {
@@ -75,6 +89,12 @@ impl std::fmt::Display for FitError {
                 write!(f, "the cost cannot make Asimov or pseudo-datasets")
             }
             FitError::NoCrossing => write!(f, "CLs does not cross the level in the range"),
+            FitError::BinMismatch { channel, sample } => write!(
+                f,
+                "sample {sample:?} has a different number of bins than channel {channel:?}"
+            ),
+            FitError::KindConflict(n) => write!(f, "{n:?} names modifiers of different kinds"),
+            FitError::Workspace(why) => write!(f, "workspace: {why}"),
         }
     }
 }

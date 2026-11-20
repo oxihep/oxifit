@@ -59,11 +59,11 @@ fn a_2d_binned_gaussian_fit_recovers_its_parameters() {
         FitOptions::new().method(FitMethod::Likelihood),
         FitOptions::new()
             .method(FitMethod::Likelihood)
-            .with_gradient(false),
+            .gradient(false),
     ] {
         let fit = data.fit_opts(&seed, &opts);
         assert!(fit.valid, "{opts:?}: {fit:?}");
-        for (got, want) in fit.params.iter().zip(&truth.params) {
+        for (got, want) in fit.params.iter().zip(truth.params()) {
             assert!((got - want).abs() < 1e-3 * want.abs().max(1.0), "{fit:?}");
         }
     }

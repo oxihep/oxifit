@@ -129,10 +129,10 @@ fn sumw2_gives_weighted_events_the_errors_their_weights_carry() {
         let plain = Events::new(&x).fit_opts(&model, &o);
         let weighted = Events::weighted(&x, &w).unwrap();
         let naive = weighted.fit_opts(&model, &o);
-        let corrected = weighted.fit_opts(&model, &o.with_sumw2(true));
+        let corrected = weighted.fit_opts(&model, &o.sumw2(true));
         assert!(plain.valid && naive.valid && corrected.valid, "{method:?}");
         let shift = usize::from(method == FitMethod::ExtendedUnbinnedLikelihood);
-        for i in shift..model.params.len() {
+        for i in shift..model.params().len() {
             assert!((naive.params[i] - plain.params[i]).abs() < 0.02 * plain.errors[i]);
             let r = naive.errors[i] / plain.errors[i];
             assert!(

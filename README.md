@@ -16,7 +16,7 @@ histograms, graphs, raw points or individual events. The minimizer is the pure-R
 
 ```toml
 [dependencies]
-oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.8.0" }
+oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.9.0" }
 ```
 
 ```rust
@@ -61,7 +61,7 @@ thing whichever one found the minimum.
 The global searches look inside each free parameter's limits, so set a
 `limit` on the parameters to be searched. They are seeded and reproducible.
 `FitOptions::strategy`, `tolerance` and `max_fcn` tune Minuit2, and
-`with_hesse(false)` skips HESSE when only the values matter.
+`hesse(false)` skips HESSE when only the values matter.
 
 ## 2-D and 3-D fits
 
@@ -82,7 +82,7 @@ differences). Every cost then has an exact gradient: MIGRAD,
 Levenberg–Marquardt and L-BFGS-B use it, and the error matrix comes from it in
 `2n` gradient calls instead of HESSE's `~2n²` cost calls — a 30-parameter fit
 of ten peaks runs in 149 ms instead of 186 ms (126 ms with L-BFGS-B).
-`FitOptions::with_gradient(false)` turns it off.
+`FitOptions::gradient(false)` turns it off.
 
 ## Unbinned fits
 
@@ -90,7 +90,7 @@ of ten peaks runs in 149 ms instead of 186 ms (126 ms with L-BFGS-B).
 individual events. `FitMethod::UnbinnedLikelihood` fits a model's *shape* to
 them, normalized numerically over the fit range; `ExtendedUnbinnedLikelihood`
 treats the model as the expected event density, so its integral (the yield) is
-fitted too. For weighted events, `FitOptions::with_sumw2(true)` corrects the
+fitted too. For weighted events, `FitOptions::sumw2(true)` corrects the
 covariance for the weights (RooFit's `SumW2Error`).
 
 ## Simultaneous fits
@@ -119,7 +119,7 @@ let external = FnCost::new(&["sigma"], |p| ((p[0] - 0.62) / 0.03).powi(2));
 let total = CostSum::new().with(data_fit).with(external);
 let fit = Fitter::new(&total, seeds)
     .limit("sigma", 0.1, 2.0)
-    .fit(&FitOptions::new().with_minos(true));
+    .fit(&FitOptions::new().minos(true));
 ```
 
 `ModelCost::fitter()` starts from the model's own seeds and settings, so
@@ -184,7 +184,7 @@ let limit = HypoTest::new(model.fitter(), "mu")?.upper_limit(0.95, (0.0, 10.0))?
 extended fit in a discriminating variable (a mass) into per-event weights for
 each species (sPlot, Pivk and Le Diberder); a weighted unbinned fit of another
 variable with the signal weights measures the signal alone. Its covariance
-needs care: `FitOptions::with_asymptotic_errors(true)` gives the
+needs care: `FitOptions::asymptotic_errors(true)` gives the
 asymptotically correct one (Langenbruch), right for weights of any sign and
 size, where SumW2 and the naive errors are not — on the `splot_lifetime`
 example's toys the pull widths are 1.00 (asymptotic), 1.37 (naive) and 1.46
@@ -192,7 +192,7 @@ example's toys the pull widths are 1.00 (asymptotic), 1.37 (naive) and 1.46
 
 ## Bin-integrated fits and efficiencies
 
-`FitOptions::with_bin_integration(true)` compares each bin with the model
+`FitOptions::bin_integration(true)` compares each bin with the model
 averaged over the bin rather than its value at the bin center (ROOT's option
 `"I"`, iminuit's `BinnedNLL`) — what matters when the model curves within a
 bin. The bins come from the data's `bin_edges` (`Points::with_bin_edges` for
@@ -200,7 +200,7 @@ variable widths), else halfway between neighbouring centers. On the
 comparison's peak rebinned to 0.5-wide bins it moves the fitted width from
 0.613 to 0.596 (generated: 0.6), exactly as ROOT does.
 
-`Efficiency::new(&x, &passed, &total)` (or `Efficiency::events(&x, &accepted)`
+`BinomialData::new(&x, &passed, &total)` (or `BinomialData::events(&x, &accepted)`
 for single events) fits an efficiency curve with the **binomial likelihood**
 (ROOT's `TEfficiency::Fit`, RooFit's `RooEfficiency`), right where a χ² with
 binomial errors fails: efficiencies near 0 or 1 and bins with few trials.
@@ -238,7 +238,7 @@ assert!(chain.r_hat("mu").unwrap() < 1.01 && chain.divergences() == 0);
 ## Toy studies
 
 `Toys::binned(&truth, &xs)` (Poisson counts) or `Toys::unbinned(&truth, range,
-n)` (events; `.extended()` for a Poisson count) generates pseudo-data from a
+n)` (events; `.extended(true)` for a Poisson count) generates pseudo-data from a
 model at known parameters; `.run(&model, &opts, ntoys)` fits each sample. The
 `ToyStudy` gives every fit, the pulls `(fitted − true)/error` and
 `pull_summary` — mean 0 and width 1 for an unbiased fit with correct errors

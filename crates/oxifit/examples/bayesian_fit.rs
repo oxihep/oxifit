@@ -47,7 +47,7 @@ fn main() {
         &FitOptions::new().method(FitMethod::Likelihood),
     );
     let fitter = cost.fitter();
-    let fit = fitter.fit(&FitOptions::new().with_minos(true));
+    let fit = fitter.fit(&FitOptions::new().minos(true));
     let chain = Sampler::new(fitter.clone())
         .seed(1)
         .run(500, 3000)
@@ -70,7 +70,7 @@ fn main() {
          NUTS median [68 %]           τ    R̂"
     );
     let minos = fit.minos.clone().unwrap_or_default();
-    for (k, name) in model.param_names.iter().enumerate() {
+    for (k, name) in model.param_names().iter().enumerate() {
         let (lo, hi) = minos.get(k).copied().unwrap_or((f64::NAN, f64::NAN));
         let (a, b) = chain.interval(name, 0.6827).expect("a parameter");
         let med = chain.quantile(name, 0.5).expect("a parameter");

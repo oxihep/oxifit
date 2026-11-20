@@ -6,6 +6,31 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.9.0]
+
+API review toward 1.0 (breaking): names settled across the oxihep crates,
+one error type, and `Model`'s parameters behind accessors.
+
+### Changed
+
+- **`Efficiency` is now `BinomialData`**, the data of `BinomialCost`: the old
+  name collided with ROOT's `TEfficiency` (`oxiroot::Efficiency`).
+- **One error type.** `TemplateError` is gone: its cases are `FitError`
+  variants (`BinMismatch`, `KindConflict`, `Workspace`), so template models,
+  scans, tests and samplers all fail with `FitError`.
+- **`Model`'s parameters behind accessors.** `param_names` and `params` are
+  no longer public fields (the model's function, constraints and gradient
+  depend on their length): read them with `param_names()` and `params()`,
+  set them with `with_params` or the new `set(name, value)`. `name` stays
+  public.
+- **Toggles are named after their option and take a `bool`:**
+  `FitOptions::minos`, `hesse`, `sumw2`, `asymptotic_errors`,
+  `bin_integration` and `gradient` (were `with_minos`, …), and
+  `Toys::extended(true)`. `with_` is kept for setting a whole component
+  (`with_params`, `with_gradient` on a model, `with_bin_edges`).
+- **`Chain::std` is now `Chain::std_dev`**, as everywhere in oxihep.
+- **oxistats 0.2.0.**
+
 ## [0.8.0]
 
 Hamiltonian Monte Carlo, and fits with an analytic gradient about twice as
@@ -88,7 +113,7 @@ change, which was never tagged.
   every supported function against finite differences).
 
 - **Bin-integrated binned fits** (ROOT's option `"I"`):
-  `FitOptions::with_bin_integration` compares each bin with the model
+  `FitOptions::bin_integration` compares each bin with the model
   averaged over it (its known integral, else 8-point Gauss–Legendre), for the
   χ², Pearson and Poisson-likelihood costs of 1-D data. Bins come from
   `FitData::bin_edges` (`Points::with_bin_edges`) or halfway between
@@ -105,7 +130,7 @@ change, which was never tagged.
   the yields' covariance. The weights sum to the yields and, at the extended
   fit's minimum, to one per event (`tests/splot.rs`).
 - **The asymptotically correct covariance of weighted unbinned fits**
-  (Langenbruch, EPJC 82 (2022) 393): `FitOptions::with_asymptotic_errors`,
+  (Langenbruch, EPJC 82 (2022) 393): `FitOptions::asymptotic_errors`,
   `V = C·D·C` from the events' weighted scores. It reduces to HESSE for
   unweighted events, ignores a constant weight (where the naive errors
   shrink), and covers on sWeighted toys where SumW2 does not.
@@ -315,7 +340,7 @@ studies, and simultaneous fits.
 
 - **Toy studies** (RooFit's `RooMCStudy`). `Toys::binned(&truth, &xs)`
   draws Poisson counts at fixed points; `Toys::unbinned(&truth, range, n)`
-  draws `n` events from the model's shape (`.extended()`: a Poisson number of
+  draws `n` events from the model's shape (`.extended(true)`: a Poisson number of
   mean `∫f`). `.run(&model, &opts, ntoys)` fits each sample into a
   `ToyStudy`, with `pulls`, `values`, `valid_fraction` and `pull_summary`
   (the pulls' mean and width with their standard errors). Seeded and
@@ -329,7 +354,7 @@ studies, and simultaneous fits.
   the model being the expected event density, so the yield is fitted too.
   `chi2` is `NaN` for both (no goodness of fit). Least-squares backends
   (Levenberg–Marquardt) fall back to MIGRAD for them.
-- **`FitOptions::with_sumw2`** corrects a weighted unbinned fit's covariance
+- **`FitOptions::sumw2`** corrects a weighted unbinned fit's covariance
   for the weights, `V = H⁻¹·W·H⁻¹` (RooFit's `SumW2Error`); without it the
   errors are those of `Σw` unit-weight events.
 - **`oxifit_formula::integrate_adaptive`**: globally adaptive Gauss–Kronrod
@@ -421,7 +446,7 @@ Global minimizers, HESSE by default, and a fit that can no longer panic.
 - **HESSE runs after MIGRAD by default**, as in ROOT's `Fit`: `errors` and
   `covariance` now come from a finite-difference Hessian at the minimum rather
   than MIGRAD's running estimate, and a minimum whose Hessian is not
-  positive-definite is reported invalid. `FitOptions::with_hesse(false)` turns
+  positive-definite is reported invalid. `FitOptions::hesse(false)` turns
   it off (e.g. for many toy fits where only the values matter).
 
 ### Fixed

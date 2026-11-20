@@ -46,7 +46,7 @@ fn fits_agree_with_and_without_the_gradient() {
     for method in [FitMethod::Chi2, FitMethod::Likelihood] {
         let opts = FitOptions::new().method(method);
         let exact = data.fit_opts(&model, &opts);
-        let numeric = data.fit_opts(&model, &opts.with_gradient(false));
+        let numeric = data.fit_opts(&model, &opts.gradient(false));
         assert!(exact.valid && numeric.valid, "{method:?}");
         for i in 0..4 {
             let d = (exact.params[i] - numeric.params[i]).abs();
@@ -100,7 +100,7 @@ fn unbinned_and_simultaneous_fits_use_the_gradient() {
         };
         let opts = FitOptions::new().method(method).range(-2.0, 4.0);
         let exact = events.fit_opts(&model, &opts);
-        let numeric = events.fit_opts(&model, &opts.with_gradient(false));
+        let numeric = events.fit_opts(&model, &opts.gradient(false));
         assert!(exact.valid && numeric.valid, "{method:?}");
         for i in 1..3 {
             assert!((exact.params[i] - numeric.params[i]).abs() < 0.05 * numeric.errors[i]);
@@ -119,7 +119,7 @@ fn unbinned_and_simultaneous_fits_use_the_gradient() {
         .channel("a", &data, &peak("bkg_a"), &lik)
         .channel("b", &data, &peak("bkg_b"), &lik);
     let exact = sim.fit(&FitOptions::new());
-    let numeric = sim.fit(&FitOptions::new().with_gradient(false));
+    let numeric = sim.fit(&FitOptions::new().gradient(false));
     assert!(exact.valid && numeric.valid);
     for i in 0..exact.params.len() {
         assert!((exact.params[i] - numeric.params[i]).abs() < 0.05 * numeric.errors[i]);
@@ -137,7 +137,7 @@ fn lbfgsb_agrees_with_migrad_and_holds_limits() {
     for gradient in [true, false] {
         let fit = data.fit_opts(
             &model,
-            &opts.minimizer(Minimizer::LBfgsB).with_gradient(gradient),
+            &opts.minimizer(Minimizer::LBfgsB).gradient(gradient),
         );
         assert!(fit.valid, "gradient={gradient}: {fit:?}");
         for i in 0..4 {
@@ -175,9 +175,7 @@ fn minos_with_an_analytic_gradient_matches_the_parabolic_errors() {
         .limit("peak.constant", 0.0, 500.0);
     let fit = data.fit_opts(
         &model,
-        &FitOptions::new()
-            .method(FitMethod::Likelihood)
-            .with_minos(true),
+        &FitOptions::new().method(FitMethod::Likelihood).minos(true),
     );
     assert!(fit.valid);
     for (k, &(lo, hi)) in fit.minos.as_ref().unwrap().iter().enumerate() {

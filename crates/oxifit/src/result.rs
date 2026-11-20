@@ -421,41 +421,41 @@ impl FitOptions {
     }
     /// Also compute asymmetric MINOS errors (see [`minos`](Self::minos) field).
     #[must_use]
-    pub fn with_minos(mut self, on: bool) -> FitOptions {
+    pub fn minos(mut self, on: bool) -> FitOptions {
         self.minos = on;
         self
     }
     /// Run HESSE after MIGRAD (see the [`hesse`](Self::hesse) field; on by default).
     #[must_use]
-    pub fn with_hesse(mut self, on: bool) -> FitOptions {
+    pub fn hesse(mut self, on: bool) -> FitOptions {
         self.hesse = on;
         self
     }
     /// Correct a weighted fit's covariance for the weights (see the
     /// [`sumw2`](Self::sumw2) field).
     #[must_use]
-    pub fn with_sumw2(mut self, on: bool) -> FitOptions {
+    pub fn sumw2(mut self, on: bool) -> FitOptions {
         self.sumw2 = on;
         self
     }
     /// Give a weighted fit the asymptotically correct covariance (see the
     /// [`asymptotic`](Self::asymptotic) field).
     #[must_use]
-    pub fn with_asymptotic_errors(mut self, on: bool) -> FitOptions {
+    pub fn asymptotic_errors(mut self, on: bool) -> FitOptions {
         self.asymptotic = on;
         self
     }
     /// Average the model over each bin in binned fits (see the
     /// [`integrate`](Self::integrate) field).
     #[must_use]
-    pub fn with_bin_integration(mut self, on: bool) -> FitOptions {
+    pub fn bin_integration(mut self, on: bool) -> FitOptions {
         self.integrate = on;
         self
     }
     /// Use the model's analytic gradient when it has one (see the
     /// [`gradient`](Self::gradient) field; on by default).
     #[must_use]
-    pub fn with_gradient(mut self, on: bool) -> FitOptions {
+    pub fn gradient(mut self, on: bool) -> FitOptions {
         self.gradient = on;
         self
     }
@@ -504,7 +504,7 @@ pub struct FitResult {
     /// Best-fit parameter values (in the model's parameter order).
     pub params: Vec<f64>,
     /// Parabolic uncertainties on each parameter (from HESSE unless it was
-    /// turned off with [`FitOptions::with_hesse`]); `0` for a fixed parameter.
+    /// turned off with [`FitOptions::hesse`]); `0` for a fixed parameter.
     pub errors: Vec<f64>,
     /// Asymmetric MINOS errors `(lower, upper)` per parameter (`lower ≤ 0 ≤ upper`),
     /// when requested via [`FitOptions::minos`]; `None` otherwise. A fixed

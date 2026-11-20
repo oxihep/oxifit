@@ -93,7 +93,7 @@ fn a_profile_interval_matches_minos_on_a_peak() {
     let data = common::peak_data();
     let model = common::peak_model(3.0).with_params(vec![200.0, 3.0, 0.6, 19.0]);
     let opts = FitOptions::new().method(FitMethod::Likelihood);
-    let fit = data.fit_opts(&model, &opts.with_minos(true));
+    let fit = data.fit_opts(&model, &opts.minos(true));
     let (mlo, mhi) = fit.minos.as_ref().unwrap()[2];
     let s = fit.params[2];
     let profile = data
@@ -127,7 +127,7 @@ fn a_peak_contour_lies_at_delta_with_the_other_parameters_refitted() {
         p[1] = mu;
         p[2] = s;
         let fixed = model.clone().with_params(p).fix("mu").fix("s");
-        let refit = data.fit_opts(&fixed, &opts.with_hesse(false));
+        let refit = data.fit_opts(&fixed, &opts.hesse(false));
         let d = refit.fval - best.fval;
         assert!((d - 2.30).abs() < 0.01, "({mu}, {s}): Δ = {d}");
     }

@@ -142,8 +142,7 @@ fn gauss2() -> FnCost {
 fn closure_cost_gives_the_gaussian_errors_and_correlation() {
     let cost = gauss2();
     for gradient in [true, false] {
-        let fit =
-            Fitter::new(&cost, vec![0.0, 0.0]).fit(&FitOptions::new().with_gradient(gradient));
+        let fit = Fitter::new(&cost, vec![0.0, 0.0]).fit(&FitOptions::new().gradient(gradient));
         assert!(fit.valid);
         assert!(close(fit.params[0], 1.0, 1e-5) && close(fit.params[1], -2.0, 1e-5));
         assert!(close(fit.errors[0], 0.5, 1e-4) && close(fit.errors[1], 2.0, 1e-4));

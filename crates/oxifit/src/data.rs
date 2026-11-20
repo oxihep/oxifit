@@ -41,7 +41,7 @@ pub trait FitData {
 
     /// Each point's bin `(lo, hi)`, for data that are bins of a histogram —
     /// used by bin-integrated fits
-    /// ([`FitOptions::with_bin_integration`](crate::FitOptions::with_bin_integration)).
+    /// ([`FitOptions::bin_integration`](crate::FitOptions::bin_integration)).
     /// `None` (the default): the bins are taken halfway between neighbouring
     /// points.
     fn bin_edges(&self) -> Option<Vec<(f64, f64)>> {
@@ -107,7 +107,7 @@ impl Points {
 
     /// Histogram bins: `edges` (one more than the points) are the bins'
     /// boundaries, for bin-integrated fits
-    /// ([`FitOptions::with_bin_integration`](crate::FitOptions::with_bin_integration))
+    /// ([`FitOptions::bin_integration`](crate::FitOptions::bin_integration))
     /// of variable-width bins.
     ///
     /// # Errors
@@ -166,7 +166,7 @@ impl Events {
 
     /// Weighted events: `w[i]` is event `i`'s weight (e.g. an efficiency
     /// correction or an sWeight). Fit with
-    /// [`FitOptions::with_sumw2`](crate::FitOptions::with_sumw2) for errors
+    /// [`FitOptions::sumw2`](crate::FitOptions::sumw2) for errors
     /// that reflect the weights.
     ///
     /// # Errors

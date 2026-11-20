@@ -38,7 +38,7 @@ fn a_decay_smeared_by_a_gaussian_is_the_ex_gaussian() {
         (-1.5, 1.5),
     );
     assert_eq!(
-        m.param_names,
+        m.param_names(),
         ["decay.n", "decay.tau", "res.mean", "res.sigma"]
     );
     for x in [-0.4, -0.1, 0.0, 0.03, 0.2, 1.0, 3.0, 6.0] {
@@ -59,8 +59,8 @@ fn a_decay_smeared_by_a_gaussian_is_the_ex_gaussian() {
     assert!(!Model::convolve("c", &plain, &res, (-1.0, 1.0)).has_gradient());
     // A convolution is not a sum: `+` makes a new sum with it as one part.
     let total = m.clone() + Model::polynomial("bkg", 0);
-    assert_eq!(total.param_names.len(), 5);
-    assert_eq!(total.param_names[0], "measured.decay.n");
+    assert_eq!(total.param_names().len(), 5);
+    assert_eq!(total.param_names()[0], "measured.decay.n");
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn a_smeared_lifetime_fit_recovers_the_lifetime() {
             .collect(),
     );
     let a = data.fit_opts(&truth, &opts);
-    let b = data.fit_opts(&truth, &opts.with_gradient(false));
+    let b = data.fit_opts(&truth, &opts.gradient(false));
     assert!(a.valid && b.valid);
     assert!((a.params[1] - b.params[1]).abs() < 0.05 * b.errors[1]);
 }

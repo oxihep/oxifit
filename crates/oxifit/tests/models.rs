@@ -10,10 +10,10 @@ fn a_sum_names_its_parameters_after_its_parts() {
     let bkg = Model::polynomial("bkg", 1).with_params(vec![2.0, 0.1]);
     let m = Model::sum("m", &[&sig, &bkg]);
     assert_eq!(
-        m.param_names,
+        m.param_names(),
         ["sig.constant", "sig.mean", "sig.sigma", "bkg.p0", "bkg.p1"]
     );
-    assert_eq!(m.params, [5.0, 1.0, 0.5, 2.0, 0.1]);
+    assert_eq!(m.params(), [5.0, 1.0, 0.5, 2.0, 0.1]);
     for x in [-1.0, 0.0, 1.0, 2.5] {
         assert!((m.eval(x) - (sig.eval(x) + bkg.eval(x))).abs() < 1e-12);
     }
@@ -23,7 +23,7 @@ fn a_sum_names_its_parameters_after_its_parts() {
     let chained = g.clone() + g.clone() + bkg.clone();
     assert_eq!(chained.name, "g+g+bkg");
     assert_eq!(
-        chained.param_names,
+        chained.param_names(),
         [
             "g.constant",
             "g.mean",
