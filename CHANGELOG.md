@@ -6,6 +6,14 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.7.0]
+
+From a curve fitter to an analysis tool: minimize any cost, hypothesis
+tests and limits, HistFactory-style template fits, sWeights, efficiency
+fits, bin-integrated fits, analytic integrals and Bayesian sampling — each
+checked against pyhf, ROOT or an exact result. It also carries 0.6.0's
+change, which was never tagged.
+
 ### Added
 
 - **Bayesian sampling**: `Sampler`, the affine-invariant ensemble sampler of
@@ -137,6 +145,8 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
   included, still reaches the program's own hook.
 
 ## [0.6.0]
+
+Never tagged: this change ships in 0.7.0.
 
 ### Changed
 
