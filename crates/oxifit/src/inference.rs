@@ -540,6 +540,11 @@ impl<'c> HypoTest<'c> {
             // Band n: the background-only toys' statistic at the (1 − Φ(n))
             // quantile — a larger μ̂ gives a smaller statistic.
             let p = tail(n);
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "p in [0, 1]: an index into `sorted`"
+            )]
             let k = ((p * sorted.len() as f64).floor() as usize).min(sorted.len() - 1);
             let qn = sorted[k];
             let b = frac(&q_b, qn);

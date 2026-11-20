@@ -140,7 +140,7 @@ impl Toys {
                 (0..ntoys)
                     .map(|_| {
                         let count = if extended {
-                            rng.poisson(sampler.total) as usize
+                            usize::try_from(rng.poisson(sampler.total)).unwrap_or(usize::MAX)
                         } else {
                             n
                         };
@@ -341,10 +341,10 @@ mod tests {
         let want_total = 2.0 * (1.0 - (-2.5f64).exp());
         assert!((s.total / want_total - 1.0).abs() < 1e-6);
         let mut rng = Rng(3);
-        let n = 200_000;
+        let n = 200_000_u32;
         let xs: Vec<f64> = (0..n).map(|_| s.draw(&mut rng)).collect();
         assert!(xs.iter().all(|&x| (0.0..=5.0).contains(&x)));
-        let mean = xs.iter().sum::<f64>() / n as f64;
+        let mean = xs.iter().sum::<f64>() / f64::from(n);
         let e = (-2.5f64).exp();
         let want = 2.0 - 5.0 * e / (1.0 - e);
         assert!((mean - want).abs() < 0.01, "{mean} vs {want}");

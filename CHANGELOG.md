@@ -6,6 +6,44 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`Nuts`: Hamiltonian Monte Carlo with the No-U-Turn Sampler** (Hoffman
+  and Gelman), on any `Fitter`'s posterior — the same priors as `Sampler`.
+  Stan's warm-up (a dual-averaging step size and a diagonal metric learned
+  in windows of doubling length); limits handled in log/logit coordinates
+  with their Jacobians; the cost's analytic gradient when it has one, else
+  central differences; independent chains, in parallel with `rayon`. On the
+  `bayesian_fit` peak its draws have an autocorrelation time of about 1.3
+  steps against the ensemble sampler's 50. `tests/nuts.rs` checks it against
+  a correlated Gaussian, a 20-dimensional one, a banana and a bounded Poisson
+  signal's exact posterior, and its two gradient paths against each other.
+- **`Chain::r_hat`** (split-R̂ across walkers or chains) and
+  **`Chain::divergences`** (NUTS trajectories that diverged).
+
+### Changed
+
+- **Faster fits with an analytic gradient**, results unchanged:
+  - MIGRAD's starting metric comes from the step sizes alone, so on the
+    gradient path the steps now come from the cost's curvature (`n + 1`
+    gradient calls): its first line search no longer wanders.
+  - When HESSE will run, MIGRAD skips its own numerical HESSE (strategy 1's
+    check, about `2n²` cost calls); the Hessian from the gradient (`2n`
+    gradient calls) does the check instead, and MIGRAD continues while the
+    distance to the minimum it implies is above tolerance. `FitResult::edm`
+    is then that exact EDM.
+  - Built-in shapes and their sums evaluate the value and gradient in one
+    pass, so a gradient costs little more than a value.
+
+  In `comparison/`, the extended unbinned fit of 10⁶ events from built-in
+  shapes makes 47 calls instead of 85 and takes 604 ms on one core instead
+  of 1116 ms (RooFit: 1064 ms; 107 ms with `rayon`), and the binned fits
+  0.07–0.08 ms instead of 0.20–0.27 ms; every fit still agrees with iminuit
+  within 0.05σ.
+- **Lints**: the cast lints (`cast_possible_truncation`, `cast_sign_loss`,
+  `cast_possible_wrap`, `cast_lossless`) are on; each hit is fixed or
+  justified where it stands.
+
 ## [0.7.0]
 
 From a curve fitter to an analysis tool: minimize any cost, hypothesis

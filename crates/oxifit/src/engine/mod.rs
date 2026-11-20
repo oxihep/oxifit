@@ -30,7 +30,7 @@ use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::data::PointNd;
-use crate::model::{Constraint, GradFn, IntegralFn, Model, ModelFn};
+use crate::model::{Constraint, GradFn, IntegralFn, Model, ModelFn, ValGradFn};
 use crate::result::{FitMethod, FitOptions, FitResult, Loss, Minimizer};
 
 /// Points per chunk of a cost sum. The sum is taken chunk by chunk and the
@@ -324,6 +324,8 @@ pub(crate) fn dispatch(fit: &Fit, opts: &FitOptions) -> FitResult {
 pub(crate) struct Prepared {
     func: ModelFn,
     grad: Option<GradFn>,
+    /// The value and gradient in one call, with a gradient.
+    value_grad: Option<ValGradFn>,
     /// The model's integral over a region, when known.
     integral: Option<IntegralFn>,
     /// The number of variables.
@@ -498,6 +500,7 @@ impl Prepared {
         Prepared {
             func,
             grad,
+            value_grad: model.fused_value_grad(),
             integral: model.integral.clone(),
             dim,
             points,
@@ -601,9 +604,9 @@ impl Prepared {
         }
         let np = p.len();
         let (loss, fs2, method) = (self.loss, self.fs2, self.method);
-        // d(cost term)/df at a point (0 where the model was clamped).
-        let slope = |x: [f64; 3], y: f64, e: f64| -> f64 {
-            let raw = self.at(&x, p);
+        // d(cost term)/df at a point where the model is `raw` (0 where the
+        // model was clamped).
+        let slope = |raw: f64, y: f64, e: f64| -> f64 {
             match method {
                 FitMethod::Chi2 => {
                     let d = (y - raw) / e;
@@ -630,11 +633,29 @@ impl Prepared {
                 }
             }
         };
+        // At a point (not a bin average), one fused evaluation gives the
+        // model and its gradient.
+        let fused = if self.integrate {
+            None
+        } else {
+            self.value_grad.as_deref()
+        };
+        let dim = self.dim;
         chunked_vec_sum(
             &self.points,
             np,
             |&(x, y, e), acc, g| {
-                let c = slope(x, y, e);
+                if let Some(vg) = fused {
+                    g.iter_mut().for_each(|v| *v = 0.0);
+                    let c = slope(vg(&x[..dim], p, g), y, e);
+                    if c != 0.0 {
+                        for (a, gk) in acc.iter_mut().zip(g.iter()) {
+                            *a += c * gk;
+                        }
+                    }
+                    return;
+                }
+                let c = slope(self.at(&x, p), y, e);
                 if c != 0.0 {
                     g.iter_mut().for_each(|v| *v = 0.0);
                     self.grad_at(&x, p, g);

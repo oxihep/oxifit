@@ -16,6 +16,11 @@ pub(crate) type ModelFn = std::sync::Arc<dyn Fn(&[f64], &[f64]) -> f64 + Send + 
 /// A model's gradient: `g(coords, params, out)` writes `∂f/∂pₖ` into `out[k]`.
 pub(crate) type GradFn = std::sync::Arc<dyn Fn(&[f64], &[f64], &mut [f64]) + Send + Sync>;
 
+/// A model's value and gradient in one evaluation: `vg(coords, params, out)`
+/// writes `∂f/∂pₖ` into `out[k]` and returns `f` — what a gradient pass needs,
+/// without computing the shared factors (an exponential, a power) twice.
+pub(crate) type ValGradFn = std::sync::Arc<dyn Fn(&[f64], &[f64], &mut [f64]) -> f64 + Send + Sync>;
+
 /// A model's integral over a region — one `(lo, hi)` per variable — at the
 /// given parameters, when it is known without integrating numerically (a
 /// product of 1-D factors, a sum of such).
@@ -50,6 +55,10 @@ pub struct Model {
     /// The analytic gradient `∂f/∂p`, when known
     /// ([`with_gradient`](Model::with_gradient)).
     pub(crate) grad: Option<GradFn>,
+    /// The value and gradient fused, for the built-in shapes and sums of
+    /// models with gradients; `None` otherwise (the engine then calls
+    /// `func` and `grad`). Cleared whenever `func` or `grad` is replaced.
+    pub(crate) value_grad: Option<ValGradFn>,
     /// For a sum ([`Model::sum`]): its parts' names, in order, so `+` can
     /// append to it rather than nest it.
     pub(crate) parts: Option<Vec<String>>,
@@ -266,6 +275,7 @@ impl Model {
             constraints,
             func: std::sync::Arc::new(func),
             grad: None,
+            value_grad: None,
             parts: None,
             unknown: Vec::new(),
             dim,
@@ -439,6 +449,7 @@ impl Model {
             constraints: Vec::new(),
             func: std::sync::Arc::new(|_, _| 0.0),
             grad: Some(std::sync::Arc::new(|_, _, _| {})),
+            value_grad: Some(std::sync::Arc::new(|_, _, _| 0.0)),
             parts: Some(Vec::new()),
             unknown: Vec::new(),
             dim: parts.first().map_or(1, |p| p.dim),
@@ -495,6 +506,13 @@ impl Model {
         // each part's known one, or its own numerical one, remembered for the
         // part's last parameters — so a step in one part's parameters (most of
         // a minimizer's) integrates that part alone.
+        self.value_grad = match (self.value_grad.take(), part.fused_value_grad()) {
+            (Some(vh), Some(vt)) => Some(std::sync::Arc::new(move |c, p, out: &mut [f64]| {
+                vh(c, &p[..offset], &mut out[..offset])
+                    + vt(c, &p[offset..offset + n], &mut out[offset..offset + n])
+            })),
+            _ => None,
+        };
         self.grad = match (self.grad.take(), part.grad.clone()) {
             (Some(gh), Some(gt)) => Some(std::sync::Arc::new(move |c, p, out: &mut [f64]| {
                 gh(c, &p[..offset], &mut out[..offset]);
@@ -568,6 +586,7 @@ impl Model {
             let integrand = |t: f64| fv(&[x - t], ps) * gv(&[t], pr);
             oxifit_formula::integrate_adaptive(integrand, lo, hi, 1e-10, CONV_INTERVALS).0
         });
+        m.value_grad = None;
         m.grad = match (signal.grad.clone(), resolution.grad.clone()) {
             (Some(fg), Some(gg)) => Some(std::sync::Arc::new(move |c, p, out: &mut [f64]| {
                 let (ps, pr) = p.split_at(ns);
@@ -662,6 +681,7 @@ impl Model {
             .iter()
             .map(|(o, n, f, g, _)| g.clone().map(|g| (*o, *n, f.clone(), g)))
             .collect();
+        m.value_grad = None;
         m.grad = grads.map(|grads| {
             std::sync::Arc::new(move |c: &[f64], p: &[f64], out: &mut [f64]| {
                 let values: Vec<f64> = grads
@@ -728,6 +748,13 @@ impl Model {
             g[0] = f * u / p[1];
             g[1] = f * (u * u - 1.0) / p[1];
         })
+        .with_value_grad(move |x, p, g| {
+            let u = (x - p[0]) / p[1];
+            let f = norm / p[1] * (-0.5 * u * u).exp();
+            g[0] = f * u / p[1];
+            g[1] = f * (u * u - 1.0) / p[1];
+            f
+        })
         .with_integral(|p, r| normal_mass((r[0].0 - p[0]) / p[1], (r[0].1 - p[0]) / p[1]))
     }
 
@@ -753,6 +780,15 @@ impl Model {
             g[1] = p[0] * e * u / s;
             g[2] = p[0] * e * u * u / s;
         })
+        .with_value_grad(|x, p, g| {
+            let s = if p[2] == 0.0 { f64::EPSILON } else { p[2] };
+            let u = (x - p[1]) / s;
+            let e = (-0.5 * u * u).exp();
+            g[0] = e;
+            g[1] = p[0] * e * u / s;
+            g[2] = p[0] * e * u * u / s;
+            p[0] * e
+        })
         .with_integral(|p, r| {
             let s = if p[2] == 0.0 { f64::EPSILON } else { p[2] };
             p[0] * s.abs()
@@ -770,6 +806,12 @@ impl Model {
             let e = (p[0] + p[1] * x).exp();
             g[0] = e;
             g[1] = e * x;
+        })
+        .with_value_grad(|x, p, g| {
+            let e = (p[0] + p[1] * x).exp();
+            g[0] = e;
+            g[1] = e * x;
+            e
         })
         .with_integral(|p, r| {
             let (lo, hi) = r[0];
@@ -795,6 +837,15 @@ impl Model {
                 *gk = xk;
                 xk *= x;
             }
+        })
+        .with_value_grad(|x, p, g| {
+            let (mut xk, mut f) = (1.0, 0.0);
+            for (gk, c) in g.iter_mut().zip(p) {
+                *gk = xk;
+                f += c * xk;
+                xk *= x;
+            }
+            f
         })
         .with_integral(|p, r| {
             let (lo, hi) = r[0];
@@ -982,7 +1033,32 @@ impl Model {
         grad: impl Fn(f64, &[f64], &mut [f64]) + Send + Sync + 'static,
     ) -> Model {
         self.grad = Some(std::sync::Arc::new(move |c, p, out| grad(c[0], p, out)));
+        self.value_grad = None;
         self
+    }
+
+    /// Give a built-in shape its fused value and gradient (see
+    /// [`ValGradFn`]); after [`with_gradient`](Self::with_gradient), which
+    /// clears it.
+    fn with_value_grad(
+        mut self,
+        vg: impl Fn(f64, &[f64], &mut [f64]) -> f64 + Send + Sync + 'static,
+    ) -> Model {
+        self.value_grad = Some(std::sync::Arc::new(move |c, p, out| vg(c[0], p, out)));
+        self
+    }
+
+    /// The fused value and gradient: the model's own, or one made from its
+    /// function and gradient; `None` without a gradient.
+    pub(crate) fn fused_value_grad(&self) -> Option<ValGradFn> {
+        if let Some(vg) = &self.value_grad {
+            return Some(vg.clone());
+        }
+        let (f, g) = (self.func.clone(), self.grad.clone()?);
+        Some(std::sync::Arc::new(move |c, p, out| {
+            g(c, p, out);
+            f(c, p)
+        }))
     }
 
     /// Give a model of any dimension its analytic gradient:
@@ -994,6 +1070,7 @@ impl Model {
         grad: impl Fn(&[f64], &[f64], &mut [f64]) + Send + Sync + 'static,
     ) -> Model {
         self.grad = Some(std::sync::Arc::new(grad));
+        self.value_grad = None;
         self
     }
 
@@ -1160,4 +1237,51 @@ fn gaussian_seed(points: &[Point]) -> (f64, f64, f64) {
     let mean = swx / sw;
     let sigma = (swx2 / sw - mean * mean).max(0.0).sqrt();
     (peak, mean, if sigma > 0.0 { sigma } else { 1.0 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Model;
+
+    /// The fused value and gradient agree with `func` and `grad`, for the
+    /// shapes that have one, for sums mixing fused and unfused parts, and
+    /// after a user gradient replaces a shape's.
+    #[test]
+    fn fused_value_gradient_matches_the_separate_ones() {
+        let custom = Model::new("c", &["a"], vec![0.7], |x, p| p[0] * x.sin())
+            .with_gradient(|x, _, g| g[0] = x.sin());
+        let models = [
+            Model::gaussian("g").with_params(vec![3.0, 0.4, 1.3]),
+            Model::normal("n").with_params(vec![-0.2, 0.8]),
+            Model::exponential("e").with_params(vec![0.5, -0.7]),
+            Model::polynomial("p", 3).with_params(vec![1.0, -2.0, 0.5, 0.1]),
+            Model::gaussian("g").with_params(vec![3.0, 0.4, 1.3])
+                + Model::exponential("e").with_params(vec![0.5, -0.7])
+                + custom.clone(),
+            Model::gaussian("g")
+                .with_params(vec![3.0, 0.4, 1.3])
+                .with_gradient(|_, _, g| g.iter_mut().for_each(|v| *v = 7.0)),
+        ];
+        for m in &models {
+            let vg = m.fused_value_grad().expect("a gradient");
+            let grad = m.grad.as_deref().expect("a gradient");
+            for x in [-1.3, 0.2, 2.9] {
+                let mut a = vec![0.0; m.params.len()];
+                let mut b = vec![0.0; m.params.len()];
+                let v = vg(&[x], &m.params, &mut a);
+                grad(&[x], &m.params, &mut b);
+                let f = (m.func)(&[x], &m.params);
+                assert!(
+                    (v - f).abs() <= 1e-12 * f.abs().max(1.0),
+                    "{}: {v} vs {f}",
+                    m.name
+                );
+                for (ga, gb) in a.iter().zip(&b) {
+                    assert!((ga - gb).abs() <= 1e-12 * gb.abs().max(1.0), "{}", m.name);
+                }
+            }
+        }
+        assert!(custom.value_grad.is_none() && models[5].value_grad.is_none());
+        assert!(models[4].value_grad.is_some());
+    }
 }

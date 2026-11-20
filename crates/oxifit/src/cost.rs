@@ -381,7 +381,7 @@ fn grid(region: &[(f64, f64)]) -> (Vec<[f64; 3]>, f64) {
     let n = ASIMOV_CELLS[dim.clamp(1, 3) - 1];
     let widths: Vec<f64> = region.iter().map(|(a, b)| (b - a) / n as f64).collect();
     let volume: f64 = widths.iter().product();
-    let total = n.pow(dim as u32);
+    let total = n.pow(u32::try_from(dim).unwrap_or(1));
     let centers = (0..total)
         .map(|mut k| {
             let mut c = [0.0; 3];
@@ -462,9 +462,9 @@ impl ModelCost {
             let (lo, hi) = region[0];
             let sampler = Sampler::new(|x| f(&[x]), lo, hi);
             let count = if extended {
-                rng.poisson(sampler.total) as usize
+                usize::try_from(rng.poisson(sampler.total)).unwrap_or(usize::MAX)
             } else {
-                self.prep.sum_w().round() as usize
+                event_count(self.prep.sum_w())
             };
             (0..count)
                 .map(|_| [sampler.draw(&mut rng), 0.0, 0.0])
@@ -486,9 +486,9 @@ impl ModelCost {
                 cdf.push(acc);
             }
             let count = if extended {
-                rng.poisson(acc) as usize
+                usize::try_from(rng.poisson(acc)).unwrap_or(usize::MAX)
             } else {
-                self.prep.sum_w().round() as usize
+                event_count(self.prep.sum_w())
             };
             (0..count)
                 .map(|_| {
@@ -647,4 +647,14 @@ pub(crate) fn model_settings(model: &Model) -> (Vec<f64>, Vec<Constraint>) {
     let mut c = model.constraints.clone();
     c.resize(model.params.len(), Constraint::default());
     (model.params.clone(), c)
+}
+
+/// The number of events a sum of weights stands for (rounded, at least 0).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a rounded, non-negative event count, saturating"
+)]
+fn event_count(sum_w: f64) -> usize {
+    sum_w.round().max(0.0) as usize
 }

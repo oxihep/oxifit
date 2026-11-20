@@ -15,7 +15,7 @@ fn peak_data() -> Points {
         .map(|(i, &x)| {
             let truth = 80.0 * (-0.5 * ((x - 3.0) / 0.5f64).powi(2)).exp() + 10.0 - x;
             // A fixed, deterministic scatter around the truth.
-            (truth + (f64::from(i as u32) * 1.7).sin() * truth.sqrt()).round()
+            (truth + ((i as f64) * 1.7).sin() * truth.sqrt()).round()
         })
         .collect();
     let e: Vec<f64> = y.iter().map(|v| v.sqrt().max(1.0)).collect();

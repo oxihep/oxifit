@@ -39,7 +39,14 @@ fn main() {
     for _ in 0..20_000 {
         let t = -tau_true * toy.uniform().ln();
         if (t_min..t_max).contains(&t) {
-            counts[((t - t_min) / width) as usize] += 1.0;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "inside the histogram range: a bin index"
+            )]
+            {
+                counts[((t - t_min) / width) as usize] += 1.0;
+            }
             times.push(t);
         }
     }

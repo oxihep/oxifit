@@ -67,6 +67,11 @@ fn generate(
     let width = (M_HI - M_LO) / BINS as f64;
     let mut fill = |m: f64, passed: bool| {
         if (M_LO..M_HI).contains(&m) {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "inside the histogram range: a bin index"
+            )]
             let b = ((m - M_LO) / width) as usize;
             if passed {
                 pass[b] += 1.0;
@@ -133,7 +138,7 @@ fn main() {
             .fit(&opts.with_minos(true));
         // The truth averaged over the bin (uniform pT within it).
         let truth: f64 = (0..200)
-            .map(|k| efficiency(lo + (hi - lo) * (k as f64 + 0.5) / 200.0, &TRUE))
+            .map(|k| efficiency(lo + (hi - lo) * (f64::from(k) + 0.5) / 200.0, &TRUE))
             .sum::<f64>()
             / 200.0;
         println!(

@@ -215,8 +215,25 @@ Gaussian priors — with the affine-invariant ensemble sampler of emcee
 (Goodman–Weare stretch moves: no tuning, robust to correlations; walkers in
 parallel with `rayon`, reproducible from a seed). The `Chain` gives means,
 quantiles, central credible intervals, the covariance and each parameter's
-autocorrelation time. Checked against exact posteriors (a correlated
-Gaussian, a banana, a Poisson signal) in `tests/mcmc.rs`.
+autocorrelation time, and `r_hat` compares the walkers. Checked against
+exact posteriors (a correlated Gaussian, a banana, a Poisson signal) in
+`tests/mcmc.rs`.
+
+`Nuts::new(fitter).run(warmup, draws)` samples the same posterior with
+Hamiltonian Monte Carlo — the No-U-Turn Sampler of Stan and PyMC, with
+Stan's warm-up (step size by dual averaging, a diagonal metric learned from
+the warm-up). It follows the posterior's gradient (the cost's analytic one,
+or central differences), so its draws are nearly independent: on the
+`bayesian_fit` peak an autocorrelation time of about 1.3 steps against the
+ensemble's 50. Limits are sampled in log/logit coordinates; chains run in
+parallel with `rayon`; `Chain::divergences` flags trajectories that hit
+too-curved regions. Checked in `tests/nuts.rs`, up to 20 dimensions.
+
+```rust
+let chain = Nuts::new(cost.fitter()).seed(1).run(1000, 2000)?;
+let (lo, hi) = chain.interval("mu", 0.6827).unwrap();
+assert!(chain.r_hat("mu").unwrap() < 1.01 && chain.divergences() == 0);
+```
 
 ## Toy studies
 
@@ -245,7 +262,7 @@ costs, limits, robust losses and fitting ROOT histograms (it uses the
 | Feature | Default | Adds |
 | --- | --- | --- |
 | `argmin` | no | A gradient-free Nelder–Mead backend via the `argmin` crate, chosen with `FitOptions::minimizer(Minimizer::NelderMead)` |
-| `rayon` | no | Large costs on all cores (an unbinned fit of 10⁶ events: 920 → 151 ms on 12 cores), and toys, profile points and contour rays fitted in parallel. Results do not depend on the number of threads. |
+| `rayon` | no | Large costs on all cores (an unbinned fit of 10⁶ events: 604 → 107 ms on 12 cores), and toys, profile points and contour rays fitted in parallel. Results do not depend on the number of threads. |
 
 ## Examples
 
@@ -261,7 +278,7 @@ next to it (`cargo run -p oxifit --example <name>`):
 | [`template_fit`](crates/oxifit/examples/template_fit.rs) | A HistFactory-style search: signal, top and W+jets templates in a signal and a control region, with normalization, jet-energy-scale, MC-statistics and luminosity uncertainties — pre/post-fit yields, MINOS, pulls, the impact ranking, significance and the CLs limit with its band, checked with toys |
 | [`splot_lifetime`](crates/oxifit/examples/splot_lifetime.rs) | A B⁰ lifetime from sWeights: an extended mass fit, the weights, a weighted decay-time fit with naive, SumW2 and asymptotic errors, and 300 toys showing only the asymptotic ones cover |
 | [`tag_and_probe`](crates/oxifit/examples/tag_and_probe.rs) | A trigger efficiency by tag and probe: simultaneous pass/fail Z fits per probe-pT bin (ε a shared parameter, MINOS errors), a bin-averaged turn-on fit, and toys of binomial vs χ² efficiency fits |
-| [`bayesian_fit`](crates/oxifit/examples/bayesian_fit.rs) | Bayesian and frequentist side by side: a peak's posterior intervals against MINOS, and a small signal's 95 % credible upper limit against CLs (asymptotic and toys) |
+| [`bayesian_fit`](crates/oxifit/examples/bayesian_fit.rs) | Bayesian and frequentist side by side: a peak's posterior intervals from the ensemble sampler and from NUTS against MINOS, and a small signal's 95 % credible upper limit against CLs (asymptotic and toys) |
 | [`resonance_search`](crates/oxifit/examples/resonance_search.rs) | A complete bump hunt: background-function choice (likelihood-ratio test) and its spurious signal, local significance vs mass, the look-elsewhere correction from toy scans, the signal fit, and CLs limits with the expected band, cross-checked with toys (`--release`: a few seconds) |
 
 ## Compared with ROOT, iminuit, scipy and zfit
@@ -269,13 +286,14 @@ next to it (`cargo run -p oxifit --example <name>`):
 [`comparison/`](comparison) fits the same data with each tool — a binned peak
 (χ² and likelihood) and extended unbinned fits of 10⁵ and 10⁶ events — and
 checks that they agree (every parameter within 0.05σ of iminuit; the binned
-fits within `10⁻⁷σ`, now a test against ROOT and iminuit). On one core oxifit
-fits binned data as fast as ROOT and 4–6× faster than iminuit, and large
-unbinned data as fast as RooFit when the model is built from its shapes
-(which, like RooFit's, carry analytic integrals: 1.1 s against 1.0 s on 10⁶
-events); with the `rayon` feature it is the fastest of all (10⁶ events:
-0.17 s, against RooFit's 1.0 s and zfit's 0.36 s on four cores). The
-comparison also covers the code each tool needs and what each does best.
+fits within `10⁻⁷σ`, now a test against ROOT and iminuit). On one core,
+with a model built from its shapes (which carry analytic gradients and
+integrals), oxifit fits binned data 2–7× faster than ROOT and scipy and
+14–16× faster than iminuit, and large unbinned data 1.8× faster than RooFit
+(0.60 s against 1.06 s on 10⁶ events); with the `rayon` feature it is the
+fastest of all (10⁶ events: 0.11 s, against RooFit's 1.06 s and zfit's
+0.37 s on four cores). The comparison also covers the code each tool needs
+and what each does best.
 
 ## The oxihep family
 

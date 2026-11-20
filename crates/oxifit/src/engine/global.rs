@@ -206,6 +206,11 @@ mod tests {
         let bx = [(0.0, 10.0), (-1.0, 1.0)];
         let pts = latin_hypercube(&mut rng, &bx, 10);
         for (d, &(lo, hi)) in bx.iter().enumerate() {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "points inside the box: strata 0..10"
+            )]
             let mut strata: Vec<usize> = pts
                 .iter()
                 .map(|p| ((p[d] - lo) / (hi - lo) * 10.0) as usize)

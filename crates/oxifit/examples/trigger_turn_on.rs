@@ -43,25 +43,25 @@ fn main() {
     // Tag-and-probe style: in each offline-pT bin, count probe muons and how
     // many fired the trigger.
     let (lo, hi, nbins, per_bin) = (10.0, 60.0, 25, 400);
-    let width = (hi - lo) / nbins as f64;
+    let width = (hi - lo) / f64::from(nbins);
     let (mut x, mut eff, mut err) = (Vec::new(), Vec::new(), Vec::new());
     println!(
         "{:>8} {:>7} {:>7} {:>10}",
         "pT [GeV]", "probes", "passed", "efficiency"
     );
     for i in 0..nbins {
-        let centre = lo + (i as f64 + 0.5) * width;
+        let centre = lo + (f64::from(i) + 0.5) * width;
         let passed = (0..per_bin)
             .filter(|_| {
                 let pt = centre + (toy.uniform() - 0.5) * width;
                 toy.uniform() < turn_on(pt, &truth)
             })
             .count();
-        let e = passed as f64 / per_bin as f64;
+        let e = passed as f64 / f64::from(per_bin);
         // Binomial error, kept away from zero at 0 % and 100 %.
-        let sigma = (e * (1.0 - e) / per_bin as f64)
+        let sigma = (e * (1.0 - e) / f64::from(per_bin))
             .sqrt()
-            .max(0.5 / per_bin as f64);
+            .max(0.5 / f64::from(per_bin));
         if i % 3 == 0 {
             println!("{centre:>8.1} {per_bin:>7} {passed:>7} {e:>10.3}");
         }

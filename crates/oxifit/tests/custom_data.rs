@@ -57,7 +57,7 @@ fn unweighted_matches_a_slice_of_points() {
 #[test]
 fn gaussian_estimate_from_custom_points() {
     // A discretized Gaussian peak; estimate_from seeds (constant, mean, sigma).
-    let xs: Vec<f64> = (-20..=20).map(|i| i as f64 * 0.25).collect();
+    let xs: Vec<f64> = (-20..=20).map(|i| f64::from(i) * 0.25).collect();
     let ys: Vec<f64> = xs
         .iter()
         .map(|&x| 5.0 * (-0.5 * ((x - 1.0) / 0.8).powi(2)).exp())
@@ -108,7 +108,7 @@ impl FitData for Decay {
 
 #[test]
 fn user_fitdata_impl_fits_an_exponential() {
-    let t: Vec<f64> = (0..10).map(|i| i as f64).collect();
+    let t: Vec<f64> = (0..10).map(f64::from).collect();
     let counts: Vec<f64> = t.iter().map(|&t| (5.0 - 0.5 * t).exp()).collect();
     let decay = Decay { t, counts };
 
@@ -126,7 +126,7 @@ fn crystal_ball_recovers_its_peak() {
     // Generate a Crystal Ball peak from the model itself, then fit it back.
     let (c0, m0, s0, a0, n0) = (10.0, 2.0, 0.5, 1.2, 3.0);
     let truth = Model::crystal_ball("cb").with_params(vec![c0, m0, s0, a0, n0]);
-    let xs: Vec<f64> = (-40..=120).map(|i| i as f64 * 0.05).collect(); // [-2, 6]
+    let xs: Vec<f64> = (-40..=120).map(|i| f64::from(i) * 0.05).collect(); // [-2, 6]
     let ys: Vec<f64> = xs.iter().map(|&x| truth.eval(x)).collect();
     let data = Points::new(&xs, &ys, &vec![0.02; xs.len()]).unwrap();
 
@@ -162,7 +162,7 @@ fn crystal_ball_recovers_its_peak() {
 fn voigtian_model_is_a_valid_fit() {
     // A Voigt profile fits cleanly (mean/sigma/gamma seeded near truth).
     let truth = Model::voigtian("v").with_params(vec![8.0, 1.0, 0.6, 0.4]);
-    let xs: Vec<f64> = (-60..=80).map(|i| i as f64 * 0.05).collect();
+    let xs: Vec<f64> = (-60..=80).map(|i| f64::from(i) * 0.05).collect();
     let ys: Vec<f64> = xs.iter().map(|&x| truth.eval(x)).collect();
     let data = Points::new(&xs, &ys, &vec![0.02; xs.len()]).unwrap();
     let fit = data.fit(
@@ -184,7 +184,7 @@ fn voigtian_model_is_a_valid_fit() {
 fn robust_loss_matches_scipy_least_squares() {
     use oxifit::Loss;
     // A clean line y = 1 + 2x with one big outlier at x = 7.
-    let x: Vec<f64> = (0..20).map(|i| i as f64).collect();
+    let x: Vec<f64> = (0..20).map(f64::from).collect();
     let mut y: Vec<f64> = x.iter().map(|&x| 1.0 + 2.0 * x).collect();
     y[7] += 50.0;
     let sigma = vec![1.0; x.len()];
@@ -249,7 +249,7 @@ fn nelder_mead_recovers_a_line() {
 fn nelder_mead_agrees_with_minuit2_on_a_gaussian() {
     use oxifit::Minimizer;
     // A clean discretized Gaussian; fit it with both backends and compare.
-    let xs: Vec<f64> = (-30..=30).map(|i| i as f64 * 0.1).collect();
+    let xs: Vec<f64> = (-30..=30).map(|i| f64::from(i) * 0.1).collect();
     let ys: Vec<f64> = xs
         .iter()
         .map(|&x| 7.0 * (-0.5 * ((x - 0.5) / 0.9).powi(2)).exp())
@@ -296,7 +296,7 @@ fn nelder_mead_agrees_with_minuit2_on_a_gaussian() {
 #[test]
 fn nelder_mead_respects_fixed_parameters() {
     use oxifit::Minimizer;
-    let xs: Vec<f64> = (-20..=20).map(|i| i as f64 * 0.1).collect();
+    let xs: Vec<f64> = (-20..=20).map(|i| f64::from(i) * 0.1).collect();
     let ys: Vec<f64> = xs
         .iter()
         .map(|&x| 5.0 * (-0.5 * ((x - 0.0) / 0.8).powi(2)).exp())

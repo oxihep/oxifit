@@ -37,7 +37,8 @@ pub struct Sampler<'c> {
     stretch: f64,
 }
 
-/// The samples of a [`Sampler`] run.
+/// The samples of a [`Sampler`] or [`Nuts`](crate::Nuts) run: per step, one
+/// draw per walker (or per chain).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chain {
     names: Vec<String>,
@@ -46,6 +47,7 @@ pub struct Chain {
     /// `[step][walker]` → full parameter vector, after the burn-in.
     samples: Vec<Vec<Vec<f64>>>,
     acceptance: f64,
+    divergences: usize,
 }
 
 impl<'c> Sampler<'c> {
@@ -222,11 +224,28 @@ impl<'c> Sampler<'c> {
             free,
             acceptance: accepted as f64 / (steps * n).max(1) as f64,
             samples,
+            divergences: 0,
         })
     }
 }
 
 impl Chain {
+    pub(crate) fn from_parts(
+        names: Vec<String>,
+        free: Vec<usize>,
+        samples: Vec<Vec<Vec<f64>>>,
+        acceptance: f64,
+        divergences: usize,
+    ) -> Chain {
+        Chain {
+            names,
+            free,
+            samples,
+            acceptance,
+            divergences,
+        }
+    }
+
     /// The parameter names (every parameter, fixed ones included).
     #[must_use]
     pub fn names(&self) -> &[String] {
@@ -239,10 +258,58 @@ impl Chain {
         self.samples.iter().flatten().cloned().collect()
     }
 
-    /// The fraction of proposals accepted (0.2–0.5 is healthy).
+    /// The fraction of proposals accepted (0.2–0.5 is healthy for the
+    /// ensemble sampler); for [`Nuts`](crate::Nuts), the mean acceptance
+    /// statistic (near its target, 0.8 by default).
     #[must_use]
     pub fn acceptance(&self) -> f64 {
         self.acceptance
+    }
+
+    /// The number of [`Nuts`](crate::Nuts) draws whose trajectory diverged:
+    /// the posterior has a region too curved for the step size, which biases
+    /// the draws. Should be 0; if not, raise
+    /// [`target_accept`](crate::Nuts::target_accept) or reparametrize. Always
+    /// 0 for the ensemble sampler.
+    #[must_use]
+    pub fn divergences(&self) -> usize {
+        self.divergences
+    }
+
+    /// The split-R̂ of `name` (Gelman et al., *Bayesian Data Analysis*, 3rd
+    /// ed.): each walker's or chain's draws are cut in two halves, and the
+    /// spread between the halves' means is compared with the spread within
+    /// them. Near 1 (below 1.01–1.05) when the chains agree; well above 1
+    /// when they have not mixed. `None` for an unknown name or fewer than 4
+    /// steps.
+    #[must_use]
+    pub fn r_hat(&self, name: &str) -> Option<f64> {
+        let i = self.index(name)?;
+        let steps = self.samples.len();
+        let walkers = self.samples.first()?.len();
+        if steps < 4 {
+            return None;
+        }
+        let half = steps / 2;
+        let mut means = Vec::with_capacity(2 * walkers);
+        let mut vars = Vec::with_capacity(2 * walkers);
+        for w in 0..walkers {
+            for part in [0..half, steps - half..steps] {
+                let x: Vec<f64> = self.samples[part].iter().map(|s| s[w][i]).collect();
+                let m = x.iter().sum::<f64>() / half as f64;
+                vars.push(x.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (half - 1) as f64);
+                means.push(m);
+            }
+        }
+        let k = means.len() as f64;
+        let n = half as f64;
+        let grand = means.iter().sum::<f64>() / k;
+        let b = n / (k - 1.0) * means.iter().map(|m| (m - grand).powi(2)).sum::<f64>();
+        let w = vars.iter().sum::<f64>() / k;
+        if w <= 0.0 {
+            return Some(if b > 0.0 { f64::INFINITY } else { 1.0 });
+        }
+        Some((((n - 1.0) / n * w + b / n) / w).sqrt())
     }
 
     fn index(&self, name: &str) -> Option<usize> {
@@ -277,6 +344,11 @@ impl Chain {
         let mut v = self.values(name)?;
         v.sort_by(f64::total_cmp);
         let pos = q.clamp(0.0, 1.0) * (v.len() - 1) as f64;
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "pos in [0, len − 1]: an index"
+        )]
         let (lo, frac) = (pos.floor() as usize, pos.fract());
         Some(v[lo] + frac * (v.get(lo + 1).copied().unwrap_or(v[lo]) - v[lo]))
     }

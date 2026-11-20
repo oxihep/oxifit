@@ -29,7 +29,7 @@ impl Rng {
     /// Uniform in `0..n` (`n > 0`).
     pub(crate) fn below(&mut self, n: usize) -> usize {
         // n is a population or dimension count: the modulo bias is negligible.
-        (self.next_u64() % n as u64) as usize
+        usize::try_from(self.next_u64() % n as u64).expect("below n, a usize")
     }
 
     /// A standard normal draw (Box–Muller).
@@ -53,12 +53,23 @@ impl Rng {
             return (0..n).filter(|_| self.uniform() < p).count() as u64;
         }
         let (mean, sd) = (n as f64 * p, (n as f64 * p * (1.0 - p)).sqrt());
-        (mean + sd * self.gauss()).round().clamp(0.0, n as f64) as u64
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to 0..=n"
+        )]
+        let k = (mean + sd * self.gauss()).round().clamp(0.0, n as f64) as u64;
+        k
     }
 
     /// A Poisson draw of mean `lambda` (`0` for a non-positive or `NaN` mean):
     /// Knuth's product of uniforms below 10, Hörmann's transformed rejection
     /// (PTRS, 1993) above — exact at any mean, in O(1) for large ones.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "PTRS accepts only whole k ≥ 0"
+    )]
     pub(crate) fn poisson(&mut self, lambda: f64) -> u64 {
         if lambda.is_nan() || lambda <= 0.0 {
             return 0;
@@ -108,13 +119,13 @@ mod tests {
     fn poisson_draws_have_the_right_mean_and_variance() {
         let mut rng = Rng(5);
         for lambda in [0.7, 3.0, 9.9, 10.0, 47.5, 1.0e4] {
-            let n = 40_000;
+            let n = 40_000_u32;
             let draws: Vec<f64> = (0..n).map(|_| rng.poisson(lambda) as f64).collect();
-            let mean = draws.iter().sum::<f64>() / n as f64;
-            let var = draws.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
+            let mean = draws.iter().sum::<f64>() / f64::from(n);
+            let var = draws.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / f64::from(n - 1);
             // Within 5 standard errors of the mean and of the variance.
-            let se_mean = (lambda / n as f64).sqrt();
-            let se_var = lambda * (2.0 / n as f64).sqrt() + (lambda / n as f64).sqrt();
+            let se_mean = (lambda / f64::from(n)).sqrt();
+            let se_var = lambda * (2.0 / f64::from(n)).sqrt() + (lambda / f64::from(n)).sqrt();
             assert!(
                 (mean - lambda).abs() < 5.0 * se_mean,
                 "λ={lambda}: mean {mean}"
