@@ -20,7 +20,7 @@
 //!
 //! // Written back in ROOT's spelling, whatever was typed.
 //! let h = Formula::parse("[0]*ln(x) + sign(x)")?;
-//! assert_eq!(h.to_root(), "[0]*log(x)+TMath::Sign(1.,x)");
+//! assert_eq!(h.to_root(), "[p0]*log(x)+TMath::Sign(1.,x)");
 //! # Ok::<(), oxifit_formula::ParseError>(())
 //! ```
 //!
@@ -318,8 +318,9 @@ impl Formula {
         &self.source
     }
 
-    /// The formula as ROOT's `TFormula` compiles it: parameters by index
-    /// (`[2]`), `pow(a,b)`, ROOT's names for functions and constants, and
+    /// The formula as ROOT's `TFormula` compiles it: parameters by index, as
+    /// ROOT writes them (`[p2]`, or `[2]` when an earlier parameter is
+    /// unused), `pow(a,b)`, ROOT's names for functions and constants, and
     /// whole numbers passed to a function as doubles (`1.`). Parsing it again
     /// gives the same formula, up to parameter names; it is what a file
     /// stores as `TFormula::fFormula`, with the names beside it.
@@ -328,12 +329,48 @@ impl Formula {
     /// # use oxifit_formula::Formula;
     /// let f = Formula::parse("[N]*exp(-0.5*((x-[mu])/[sigma])^2)")?;
     /// assert_eq!(f.param_names(), ["N", "mu", "sigma"]);
-    /// assert_eq!(f.to_root(), "[0]*exp(-0.5*pow((x-[1])/[2],2.))");
+    /// assert_eq!(f.to_root(), "[p0]*exp(-0.5*pow((x-[p1])/[p2],2.))");
     /// # Ok::<(), oxifit_formula::ParseError>(())
     /// ```
     #[must_use]
     pub fn to_root(&self) -> String {
-        render::text(&self.expr, &self.params, Style::Root)
+        // ROOT's own spelling, `[p2]`, when every parameter appears; `[2]`
+        // otherwise, which defines the ones before it too.
+        let mut used = vec![false; self.params.len()];
+        self.expr.walk(&mut |e| {
+            if let Expr::Param(i) = e
+                && let Some(u) = used.get_mut(*i)
+            {
+                *u = true;
+            }
+        });
+        let style = if used.iter().all(|u| *u) {
+            Style::RootP
+        } else {
+            Style::Root
+        };
+        render::text(&self.expr, &self.params, style)
+    }
+
+    /// The formula as a ROOT file stores it (`TFormula::fFormula`): ROOT's
+    /// spelling, as [`to_root`](Self::to_root), with every parameter by its
+    /// name (`[Constant]`, `[p2]`). It reads back with the same parameter
+    /// order only beside its names and indices
+    /// ([`param_names`](Self::param_names)), as a file keeps them: on its own,
+    /// names are numbered in ROOT's order.
+    ///
+    /// ```
+    /// # use oxifit_formula::Formula;
+    /// let f = Formula::parse("crystalball")?;
+    /// assert_eq!(
+    ///     f.to_root_named(),
+    ///     "[Constant]*ROOT::Math::crystalball_function(x,[Alpha],[N],[Sigma],[Mean])"
+    /// );
+    /// # Ok::<(), oxifit_formula::ParseError>(())
+    /// ```
+    #[must_use]
+    pub fn to_root_named(&self) -> String {
+        render::text(&self.expr, &self.params, Style::RootNamed)
     }
 
     /// The formula in LaTeX math, for a plot label: `p_{0}` for numbered

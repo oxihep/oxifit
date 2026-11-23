@@ -24,7 +24,10 @@ Checked against ROOT 6.40 on 129 formulas (`tests/root_golden.rs`).
 - **What a formula writes, ROOT compiles.** `to_root` (which replaces
   `root_formula`) writes the tree in ROOT's spelling rather than the text
   as typed: `ln` was stored as `ln`, `sign(x)` as `sign(x)` and `min(x,1)`
-  as `min(x,1)`, all of which ROOT failed to compile.
+  as `min(x,1)`, all of which ROOT failed to compile. Parameters are `[p2]`,
+  as ROOT writes them, or `[2]` when an earlier one is unused.
+  `to_root_named` writes them by name (`[Mean]`), as a ROOT file stores a
+  formula beside its parameter map.
 - `ParseError::position` is the byte offset it was documented as; it was a
   token index.
 - `e` (and ROOT's other constants) parse; `e` was documented but rejected.

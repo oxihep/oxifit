@@ -12,6 +12,14 @@ pub(crate) enum Style {
     /// What ROOT's `TFormula` compiles: parameters by index (`[2]`),
     /// `pow(a, b)`, and ROOT's function names.
     Root,
+    /// As `Root`, with parameters as ROOT itself writes them (`[p2]`): for a
+    /// formula that uses every parameter. (ROOT's `[2]` also defines `p0` and
+    /// `p1`; `[p2]` does not.)
+    RootP,
+    /// As `Root`, with every parameter by its name (`[Mean]`, `[p2]`): what
+    /// a ROOT file stores as `fFormula`, beside the map from each name to
+    /// its index.
+    RootNamed,
     /// For people: parameters by name (`[Mean]`, or `[2]` for `p2`) and `^`.
     Display,
 }
@@ -109,7 +117,7 @@ fn write_text(out: &mut String, e: &Expr, params: &[String], style: Style, in_ca
     match e {
         Expr::Num(v) => number(out, *v, in_call),
         // ROOT's `infinity` becomes an undeclared `inf` in the C++ it compiles.
-        Expr::Const(Constant::Infinity) if style == Style::Root => {
+        Expr::Const(Constant::Infinity) if style != Style::Display => {
             out.push_str("TMath::Infinity()")
         }
         Expr::Const(c) => out.push_str(c.root_name()),
@@ -117,7 +125,11 @@ fn write_text(out: &mut String, e: &Expr, params: &[String], style: Style, in_ca
         Expr::Param(i) => {
             let name = params.get(*i).map_or("", String::as_str);
             let positional = name.strip_prefix('p') == Some(&i.to_string());
-            if style == Style::Root || positional || name.is_empty() {
+            if style == Style::RootP {
+                let _ = write!(out, "[p{i}]");
+            } else if style == Style::RootNamed && !name.is_empty() {
+                let _ = write!(out, "[{name}]");
+            } else if style == Style::Root || positional || name.is_empty() {
                 let _ = write!(out, "[{i}]");
             } else {
                 let _ = write!(out, "[{name}]");
@@ -133,7 +145,7 @@ fn write_text(out: &mut String, e: &Expr, params: &[String], style: Style, in_ca
             }
             child(out, a, prec(a) < 8);
         }
-        Expr::Binary(BinaryOp::Pow, a, b) if style == Style::Root => {
+        Expr::Binary(BinaryOp::Pow, a, b) if style != Style::Display => {
             out.push_str("pow(");
             write_text(out, a, params, style, true);
             out.push(',');
@@ -160,7 +172,7 @@ fn write_text(out: &mut String, e: &Expr, params: &[String], style: Style, in_ca
             }
             child(out, b, right_parens);
         }
-        Expr::Call(Function::Signum, args) if style == Style::Root => {
+        Expr::Call(Function::Signum, args) if style != Style::Display => {
             out.push_str("TMath::Sign(1.,");
             write_args(out, args, params, style);
             out.push(')');
@@ -191,7 +203,7 @@ fn write_args(out: &mut String, args: &[Expr], params: &[String], style: Style) 
         if i > 0 {
             out.push(',');
         }
-        write_text(out, a, params, style, style == Style::Root);
+        write_text(out, a, params, style, style != Style::Display);
     }
 }
 

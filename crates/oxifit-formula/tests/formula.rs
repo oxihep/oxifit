@@ -54,7 +54,7 @@ fn parameter_names_can_be_set_from_a_file() {
         .unwrap();
     assert_eq!(f.param_names(), ["slope", "offset"]);
     assert_eq!(f.to_string(), "[slope]*x+[offset]");
-    assert_eq!(f.to_root(), "[0]*x+[1]");
+    assert_eq!(f.to_root(), "[p0]*x+[p1]");
     let f = parse("[0]*x");
     assert!(f.clone().with_param_names(&["a", "b"]).is_err());
     assert!(f.clone().with_param_names(&["a b"]).is_err());
@@ -127,7 +127,9 @@ fn display_is_for_people_and_to_root_for_root() {
         ["p0", "p1", "p2", "p3", "N", "mu", "sigma"]
     );
     assert_eq!(f.to_string(), "[N]*exp(-0.5*((x-[mu])/[sigma])^2)+[3]");
+    // `p0` … `p2` are unused, so `[4]`: ROOT's `[p4]` would not define them.
     assert_eq!(f.to_root(), "[4]*exp(-0.5*pow((x-[5])/[6],2.))+[3]");
+    assert_eq!(parse("[b]*x+[a]").to_root(), "[p1]*x+[p0]");
     // Precedence survives a round trip.
     for s in [
         "-x^2",
