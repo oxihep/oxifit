@@ -978,12 +978,28 @@ impl Model {
     }
 
     /// Build a model from an arbitrary ROOT [`TFormula`](oxifit_formula) string
-    /// (`"[0]+[1]*x"`, `"gaus"`, `"[0]*exp(-[1]*x)+[2]"`, …). Parameters are
-    /// `[0], [1], …` and the variable is `x`; the parameter count is inferred
-    /// from the formula. All parameters start at zero — seed them with
-    /// [`with_params`](Self::with_params). The model has an exact gradient,
-    /// from the formula's symbolic derivatives (unless it uses `lgamma`), so
-    /// MIGRAD, HESSE and L-BFGS-B do not need finite differences.
+    /// (`"[0]+[1]*x"`, `"gaus"`, `"[0]*exp(-[1]*x)+[2]"`, `"xygaus"`, …).
+    /// Parameters are `[0], [1], …` or names (`[mean]`), numbered as ROOT
+    /// numbers them; the variables are `x`, `y`, `z`, and the model has as
+    /// many as the formula uses. Its parameter names are the formula's: `p0`,
+    /// `p1`, … for numbered parameters, ROOT's for a shortcut alone
+    /// (`Constant`, `Mean`, `Sigma` for `gaus`). All parameters start at zero
+    /// — seed them with [`with_params`](Self::with_params) or
+    /// [`set`](Self::set).
+    ///
+    /// The formula is compiled once, and the model has an exact gradient
+    /// from its symbolic derivatives (unless it uses `lgamma` or a special
+    /// density such as `TMath::Landau`), so MIGRAD, HESSE and L-BFGS-B do not
+    /// need finite differences.
+    ///
+    /// ```
+    /// # use oxifit::Model;
+    /// let m = Model::from_formula("peak", "gaus")?;
+    /// assert_eq!(m.param_names(), ["Constant", "Mean", "Sigma"]);
+    /// let m = m.with_params(vec![2.0, 0.0, 1.0]);
+    /// assert_eq!(m.eval(0.0), 2.0);
+    /// # Ok::<(), oxifit_formula::ParseError>(())
+    /// ```
     ///
     /// # Errors
     /// Returns a [`ParseError`](oxifit_formula::ParseError) if the formula does
@@ -991,18 +1007,21 @@ impl Model {
     pub fn from_formula(name: &str, formula: &str) -> Result<Model, oxifit_formula::ParseError> {
         let f = oxifit_formula::Formula::parse(formula)?;
         let npar = f.npar();
-        // Own the parameter names so the closure can move `f`.
         let names = f.param_names().to_vec();
         let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
         // The exact gradient, from the formula's symbolic derivatives, when
         // every one exists.
-        let derivatives: Option<Vec<oxifit_formula::Formula>> =
-            (0..npar).map(|k| f.derivative(k)).collect();
-        let model = Model::new(name, &name_refs, vec![0.0; npar], move |x, p| f.eval1(x, p));
+        let derivatives: Option<Vec<oxifit_formula::Compiled>> = (0..npar)
+            .map(|k| f.derivative(k).map(|d| d.compile()))
+            .collect();
+        let value = f.compile();
+        let model = Model::with_dim(name, &name_refs, vec![0.0; npar], f.ndim(), move |c, p| {
+            value.eval(c, p)
+        });
         Ok(match derivatives {
-            Some(d) => model.with_gradient(move |x, p, g| {
+            Some(d) => model.with_gradient_at(move |c, p, g| {
                 for (gk, dk) in g.iter_mut().zip(&d) {
-                    *gk = dk.eval1(x, p);
+                    *gk = dk.eval(c, p);
                 }
             }),
             None => model,
