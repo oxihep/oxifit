@@ -6,6 +6,73 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+oxifit-formula follows ROOT's `TFormula`: the same parameters in the same
+order, the same shortcuts, and formulas written back as ROOT compiles them.
+Checked against ROOT 6.40 on 129 formulas (`tests/root_golden.rs`).
+
+### Fixed
+
+- **A formula read from a ROOT file could swap its parameters.** ROOT stores
+  `[1]*x+[0]` as `[p1]*x+[p0]`, and `[p1]` was read as a named parameter
+  numbered by first appearance, so it became parameter 0: the function read
+  back evaluated `[0]*x+[1]`. `[pN]` is parameter N again, and two formulas
+  are equal only when their trees are (they compared as text, so the swap
+  went unseen).
+- **Named parameters are numbered as ROOT numbers them**: `p<N>` names
+  first, by number, then the others in byte order; `[N]` defines every
+  `p0` … `pN`. `[b]*x+[a]` has `a` first, as in ROOT, where it had `b`.
+- **What a formula writes, ROOT compiles.** `to_root` (which replaces
+  `root_formula`) writes the tree in ROOT's spelling rather than the text
+  as typed: `ln` was stored as `ln`, `sign(x)` as `sign(x)` and `min(x,1)`
+  as `min(x,1)`, all of which ROOT failed to compile. Parameters are `[p2]`,
+  as ROOT writes them, or `[2]` when an earlier one is unused.
+  `to_root_named` writes them by name (`[Mean]`), as a ROOT file stores a
+  formula beside its parameter map.
+- `ParseError::position` is the byte offset it was documented as; it was a
+  token index.
+- `e` (and ROOT's other constants) parse; `e` was documented but rejected.
+- A missing variable or parameter is `NaN`, not 0: a formula of `x` and `y`
+  evaluated with `x` alone quietly used `y = 0`.
+- `a == b < c` binds as in C++ (`==` looser than `<`).
+
+### Added
+
+- **ROOT's shortcuts and functions**: `gausn`, `landau`, `landaun`,
+  `crystalball`, `breitwigner`, `bigaus`, `cheb0`…`cheb10`, the 2- and 3-D
+  `xygaus`, `xyzgaus`, `xyexpo`, `xylandau`, shortcuts in other variables
+  (`ygaus`, `gaus[x,y]`, `ypol2`, `pol2(y, 0)`) or with named parameters
+  (`pol2(x,[a],[b],[c])`), each expanded exactly as ROOT expands it. A
+  formula that is one shortcut gets ROOT's parameter names (`Constant`,
+  `Mean`, `Sigma`). `TMath::Gaus`, `TMath::Landau`, `TMath::BreitWigner`,
+  `TMath::Sq`, `TMath::Sign`, `ROOT::Math::normal_pdf`, `breitwigner_pdf`,
+  `crystalball_function`, `bigaussian_pdf`, `ChebyshevN`, `fmod`, `log1p`,
+  any `std::` spelling, `!`, `x[0]`…`x[3]`, the variable `t`, and ROOT's
+  constants (`sqrt2`, `c`, `TMath::E()`, …).
+- **The tree is public**: `Formula::expr` returns an `Expr` of `BinaryOp`,
+  `Constant` and `Function` nodes.
+- `Formula::parse_root`: only what ROOT accepts, with ROOT's spelling as a
+  hint (`ln(x)` → "use `log`").
+- **Errors that show where and how**: `ParseError` has a `span`, a
+  `message` and a `hint`, and displays the formula with the problem
+  underlined ("ROOT writes logical AND as `&&`", "did you mean `sqrt`?",
+  "ROOT has no implicit multiplication").
+- `Formula::compile`: a `Compiled` formula, about 3× faster than walking the
+  tree, with `eval_many` for a column of `x`.
+- `Formula::variable_derivative` (symbolic `d/dx`), `param_index`,
+  `with_param_names`, `variables`, `functions`, `to_latex` (for plot
+  labels), and a `Display` for people (`[Mean]`, `^`).
+
+### Changed
+
+- **Breaking:** `root_formula` is replaced by `to_root`, which writes
+  parameters by index (`[2]`) and functions by their ROOT names;
+  `param_names` gives real names; numbering of named parameters follows ROOT
+  (above); and `eval` gives `NaN` for missing values.
+- `Model::from_formula` compiles its formula and its symbolic gradient,
+  takes the formula's parameter names (`Constant`, `Mean`, `Sigma` for
+  `gaus`), and makes a model of as many variables as the formula uses
+  (`xygaus` is a 2-D model).
+
 ## [0.9.0]
 
 API review toward 1.0 (breaking): names settled across the oxihep crates,

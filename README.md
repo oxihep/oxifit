@@ -12,7 +12,7 @@ histograms, graphs, raw points or individual events. The minimizer is the pure-R
 | Crate | What it is |
 | --- | --- |
 | [`oxifit`](crates/oxifit) | The fitter: `FitData`/`FitExt`, `Model`, χ² / Poisson-likelihood / unbinned and extended likelihood costs, robust losses, Minuit2 (MIGRAD + HESSE, MINOS), Levenberg–Marquardt, global searches (multistart, differential evolution, CMA-ES) and an optional Nelder–Mead `argmin` backend |
-| [`oxifit-formula`](crates/oxifit-formula) | A ROOT `TFormula` expression engine (its only dependency is oxistats, for `erf`/`erfc`/`lgamma`): parse and evaluate formula strings, numerical integral and derivative. `Model::from_formula` and oxiroot's `Func1D`/`Func2D`/`Func3D` are built on it. |
+| [`oxifit-formula`](crates/oxifit-formula) | A ROOT `TFormula` engine (its only dependency is oxistats, for the special functions): parse formulas with ROOT's parameters, shortcuts and functions, evaluate or compile them, differentiate them symbolically, and write them back as ROOT compiles them (`to_root`), checked against ROOT 6.40. `Model::from_formula` and oxiroot's `Func1D`/`Func2D`/`Func3D` are built on it. |
 
 ```toml
 [dependencies]
