@@ -634,14 +634,7 @@ impl Model {
                             f(&[x - t], ps) * d[k - ns]
                         }
                     };
-                    *o = oxiformula::integrate_adaptive(
-                        integrand,
-                        lo,
-                        hi,
-                        1e-10,
-                        CONV_INTERVALS,
-                    )
-                    .0;
+                    *o = oxiformula::integrate_adaptive(integrand, lo, hi, 1e-10, CONV_INTERVALS).0;
                 }
             })),
             _ => None,
