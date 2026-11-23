@@ -615,7 +615,7 @@ impl Model {
             let (ps, pr) = p.split_at(ns);
             let x = c[0];
             let integrand = |t: f64| fv(&[x - t], ps) * gv(&[t], pr);
-            oxifit_formula::integrate_adaptive(integrand, lo, hi, 1e-10, CONV_INTERVALS).0
+            oxiformula::integrate_adaptive(integrand, lo, hi, 1e-10, CONV_INTERVALS).0
         });
         m.value_grad = None;
         m.grad = match (signal.grad.clone(), resolution.grad.clone()) {
@@ -634,14 +634,7 @@ impl Model {
                             f(&[x - t], ps) * d[k - ns]
                         }
                     };
-                    *o = oxifit_formula::integrate_adaptive(
-                        integrand,
-                        lo,
-                        hi,
-                        1e-10,
-                        CONV_INTERVALS,
-                    )
-                    .0;
+                    *o = oxiformula::integrate_adaptive(integrand, lo, hi, 1e-10, CONV_INTERVALS).0;
                 }
             })),
             _ => None,
@@ -747,7 +740,7 @@ impl Model {
                     match i {
                         Some(i) => i(pk, &[(lo, hi)]),
                         None => {
-                            oxifit_formula::integrate_adaptive(
+                            oxiformula::integrate_adaptive(
                                 |x| f(&[x], pk),
                                 lo,
                                 hi,
@@ -977,7 +970,7 @@ impl Model {
         )
     }
 
-    /// Build a model from an arbitrary ROOT [`TFormula`](oxifit_formula) string
+    /// Build a model from an arbitrary ROOT [`TFormula`](oxiformula) string
     /// (`"[0]+[1]*x"`, `"gaus"`, `"[0]*exp(-[1]*x)+[2]"`, `"xygaus"`, …).
     /// Parameters are `[0], [1], …` or names (`[mean]`), numbered as ROOT
     /// numbers them; the variables are `x`, `y`, `z`, and the model has as
@@ -998,20 +991,20 @@ impl Model {
     /// assert_eq!(m.param_names(), ["Constant", "Mean", "Sigma"]);
     /// let m = m.with_params(vec![2.0, 0.0, 1.0]);
     /// assert_eq!(m.eval(0.0), 2.0);
-    /// # Ok::<(), oxifit_formula::ParseError>(())
+    /// # Ok::<(), oxiformula::ParseError>(())
     /// ```
     ///
     /// # Errors
-    /// Returns a [`ParseError`](oxifit_formula::ParseError) if the formula does
+    /// Returns a [`ParseError`](oxiformula::ParseError) if the formula does
     /// not parse.
-    pub fn from_formula(name: &str, formula: &str) -> Result<Model, oxifit_formula::ParseError> {
-        let f = oxifit_formula::Formula::parse(formula)?;
+    pub fn from_formula(name: &str, formula: &str) -> Result<Model, oxiformula::ParseError> {
+        let f = oxiformula::Formula::parse(formula)?;
         let npar = f.npar();
         let names = f.param_names().to_vec();
         let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
         // The exact gradient, from the formula's symbolic derivatives, when
         // every one exists.
-        let derivatives: Option<Vec<oxifit_formula::Compiled>> = (0..npar)
+        let derivatives: Option<Vec<oxiformula::Compiled>> = (0..npar)
             .map(|k| f.derivative(k).map(|d| d.compile()))
             .collect();
         let value = f.compile();

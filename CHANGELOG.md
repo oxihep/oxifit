@@ -6,6 +6,18 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.11.0]
+
+The formula engine leaves for a repository of its own.
+
+### Changed
+
+- **`oxifit-formula` is now [oxiformula](https://github.com/oxihep/oxiformula)**
+  (0.11.0), in its own repository with its history: same API, renamed
+  crate. `Model::from_formula` returns `oxiformula::ParseError` (was
+  `oxifit_formula::ParseError`). The formula fuzz target and the ROOT golden
+  job moved with it.
+
 ## [0.10.1]
 
 ### Added

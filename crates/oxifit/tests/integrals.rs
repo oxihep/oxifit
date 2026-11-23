@@ -4,7 +4,7 @@
 use oxifit::Model;
 
 fn quad(m: &Model, lo: f64, hi: f64) -> f64 {
-    oxifit_formula::integrate_adaptive(|x| m.eval(x), lo, hi, 1e-13, 4000).0
+    oxiformula::integrate_adaptive(|x| m.eval(x), lo, hi, 1e-13, 4000).0
 }
 
 #[test]
