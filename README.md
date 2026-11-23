@@ -12,11 +12,10 @@ histograms, graphs, raw points or individual events. The minimizer is the pure-R
 | Crate | What it is |
 | --- | --- |
 | [`oxifit`](crates/oxifit) | The fitter: `FitData`/`FitExt`, `Model`, χ² / Poisson-likelihood / unbinned and extended likelihood costs, robust losses, Minuit2 (MIGRAD + HESSE, MINOS), Levenberg–Marquardt, global searches (multistart, differential evolution, CMA-ES) and an optional Nelder–Mead `argmin` backend |
-| [`oxifit-formula`](crates/oxifit-formula) | A ROOT `TFormula` engine (its only dependency is oxistats, for the special functions): parse formulas with ROOT's parameters, shortcuts and functions, evaluate or compile them, differentiate them symbolically, and write them back as ROOT compiles them (`to_root`), checked against ROOT 6.40. `Model::from_formula` and oxiroot's `Func1D`/`Func2D`/`Func3D` are built on it. |
 
 ```toml
 [dependencies]
-oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.10.1" }
+oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.11.0" }
 ```
 
 ```rust
@@ -317,15 +316,17 @@ release tag, as shown above.
 
 These crates were `oxiroot-fit` and `oxiroot-formula` inside the
 [oxiroot](https://github.com/oxihep/oxiroot) workspace; their history was
-carried over when they moved here.
+carried over when they moved here. The formula engine, `oxifit-formula`, moved
+on to its own repository as [oxiformula](https://github.com/oxihep/oxiformula)
+in 0.11.0, with its history; `Model::from_formula` is built on it.
 
 ## AI assistance
 
 This project is developed with the help of AI coding assistants. Under the
 author's direction they wrote and reviewed much of the code, the tests and
 the documentation. Every change goes through the same checks either way: the
-test suite and CI (including cross-checks between its two minimizers, and
-fuzzing of the formula parser) and review before it is merged. If something
+test suite and CI (including cross-checks between its two minimizers) and
+review before it is merged. If something
 looks wrong, please open an issue.
 
 ## License

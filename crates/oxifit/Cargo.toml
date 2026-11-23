@@ -14,7 +14,7 @@ description = "Parametric curve fitting (Minuit2) for any 1-D data — histogram
 [dependencies]
 minuit2 = { workspace = true }
 oxistats = { workspace = true }
-oxifit-formula = { workspace = true }
+oxiformula = { workspace = true }
 argmin = { workspace = true, optional = true }
 argmin-math = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }

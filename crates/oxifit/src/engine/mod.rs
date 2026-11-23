@@ -115,7 +115,7 @@ const NESTED_INTERVALS: usize = 48;
 /// `∫ f` over a region of 1–3 variables (one `(lo, hi)` each): bounded,
 /// globally adaptive Gauss–Kronrod, nested for 2-D and 3-D.
 pub(crate) fn integrate_region(f: &dyn Fn(&[f64]) -> f64, region: &[(f64, f64)]) -> f64 {
-    use oxifit_formula::integrate_adaptive as quad;
+    use oxiformula::integrate_adaptive as quad;
     match *region {
         [(a, b)] => quad(|x| f(&[x]), a, b, 1e-10, NORM_INTERVALS).0,
         [(a, b), (c, d)] => {
