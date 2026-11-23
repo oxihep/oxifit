@@ -1,3 +1,5 @@
+# One formula per line; a tab and a ROOT version (6.40) marks the oldest ROOT
+# that accepts it.
 gaus
 gausn
 expo
@@ -28,10 +30,10 @@ xygaus
 xyzgaus
 bigaus
 bigaus(1)
-xyexpo
+xyexpo	6.40
 expo(2)
 xylandau
-xylandaun
+xylandaun	6.40
 [0]*x[0]
 x[1]*x[0]+x[2]
 t*x
