@@ -6,6 +6,33 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.10.1]
+
+### Added
+
+- **ROOT's other densities**: `ROOT::Math::crystalball_pdf`, `landau_pdf`,
+  `beta_pdf`, `cauchy_pdf`, `chisquared_pdf`, `exponential_pdf`,
+  `fdistribution_pdf`, `gamma_pdf`, `lognormal_pdf`, `poisson_pdf`,
+  `tdistribution_pdf`, `uniform_pdf` and `TMath::Poisson`, as ROOT computes
+  them (edge cases included), and the `crystalballn` shortcut.
+  `breitwignern` is refused with a reason: ROOT's own does not compile.
+- CI's "formulas against ROOT" job regenerates the golden table with ROOT's
+  image (pinned on PRs, the latest weekly) and runs the test against it.
+
+### Changed
+
+- **`Compiled` computes a repeated subexpression once**: `gaus`'s
+  `(x-[1])/[2]`, written twice as ROOT writes it, is one computation. With
+  oxistats 0.2.1's `erf`, a compiled formula is about as fast as ROOT's JIT:
+  `gaus` 10 ns, the erf turn-on 13 ns (from 69), against ROOT's 9 and 14.
+- **oxistats 0.2.1**: `erf` and `erfc` 16× faster and within a few ulps.
+
+### Fixed
+
+- `ROOT::Math::crystalball_function` takes its `mean` as optional, as in
+  ROOT (four arguments were refused), and gives 0 for a negative `sigma`.
+- An underscore in a function name is escaped in `to_latex`.
+
 ## [0.10.0]
 
 oxifit-formula follows ROOT's `TFormula`: the same parameters in the same

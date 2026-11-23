@@ -24,6 +24,45 @@ env:
   RUST_STABLE: "1.100"
 
 jobs:
+  root-golden:
+    name: formulas against ROOT
+    # tests/root_golden.rs checks the formula engine against ROOT's answers,
+    # committed in tests/data/root_formulas.tsv. Here they are made again by
+    # the ROOT of the image (pinned on PRs, the latest weekly), and the test
+    # runs against them: ROOT must accept every formula, compile everything
+    # `to_root` writes, and agree on every value (to 1e-10; libm differs by a
+    # few ulps between platforms, so the table is not compared byte for byte).
+    runs-on: ubuntu-latest
+    container: rootproject/root:${{ github.event_name == 'schedule' && 'latest' || '6.38.00-ubuntu25.10' }}
+    # As in oxiroot's interop job: root's own HOME for rustup, and an empty
+    # docker config to keep the runner's `docker exec` quiet.
+    env:
+      HOME: /root
+      DOCKER_CONFIG: /tmp
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain ${{ env.RUST_STABLE }}
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Write the macro's input (each formula and its to_root)
+        run: cargo test -p oxifit-formula --test root_golden -- --ignored write_inputs
+
+      - name: ROOT's answers, from this ROOT
+        working-directory: crates/oxifit-formula/tests/data
+        run: |
+          root -l -b -q root_formulas.C
+          if grep -q 'INVALID' root_formulas.tsv; then
+            grep 'INVALID' root_formulas.tsv
+            echo "ROOT rejects a formula above, or what to_root writes for it"
+            exit 1
+          fi
+
+      - name: The engine agrees with them
+        run: cargo test -p oxifit-formula --test root_golden
+
   test:
     name: test / lint / fmt
     runs-on: ubuntu-latest

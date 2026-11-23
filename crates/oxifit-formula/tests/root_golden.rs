@@ -5,6 +5,8 @@
 //! ROOT's answers are `data/root_formulas.tsv`, made by
 //! `data/root_formulas.C` (which says how). Each formula is evaluated at
 //! x, y, z, t = 1.3, 0.7, 0.2, 0.9 with parameters 1, 1.5, 2, … by index.
+//! CI's "formulas against ROOT" job makes the table again with ROOT's own
+//! image and runs this test against it.
 
 use std::path::PathBuf;
 

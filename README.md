@@ -16,7 +16,7 @@ histograms, graphs, raw points or individual events. The minimizer is the pure-R
 
 ```toml
 [dependencies]
-oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.10.0" }
+oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.10.1" }
 ```
 
 ```rust
