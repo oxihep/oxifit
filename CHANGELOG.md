@@ -6,6 +6,8 @@ Notable changes to oxifit and oxifit-formula, by release. The format follows
 
 ## [Unreleased]
 
+## [0.10.0]
+
 oxifit-formula follows ROOT's `TFormula`: the same parameters in the same
 order, the same shortcuts, and formulas written back as ROOT compiles them.
 Checked against ROOT 6.40 on 129 formulas (`tests/root_golden.rs`).
